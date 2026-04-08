@@ -44,6 +44,8 @@ Phase 1 commands in the new CLI:
 - `watch`
 - `resume <run-id> [--approval auto|confirm] [prompt]`
 
+When using `approval=confirm`, pass `--allow-interactive-provider` explicitly. This keeps the CLI from silently dropping into provider-managed confirmation prompts.
+
 Each run now keeps:
 
 - normalized event transcripts

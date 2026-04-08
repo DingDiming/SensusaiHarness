@@ -40,6 +40,8 @@ enum Commands {
         provider: ProviderKind,
         #[arg(long, default_value = "auto")]
         approval: ApprovalMode,
+        #[arg(long, default_value_t = false)]
+        allow_interactive_provider: bool,
         #[arg(long, default_value = ".")]
         cwd: PathBuf,
         prompt: String,
@@ -51,6 +53,8 @@ enum Commands {
         run_id: String,
         #[arg(long)]
         approval: Option<ApprovalMode>,
+        #[arg(long, default_value_t = false)]
+        allow_interactive_provider: bool,
         prompt: Option<String>,
     },
 }
@@ -178,6 +182,7 @@ fn main() -> Result<()> {
         Commands::Run {
             provider,
             approval,
+            allow_interactive_provider,
             cwd,
             prompt,
         } => {
@@ -187,6 +192,7 @@ fn main() -> Result<()> {
             let adapter = resolve_provider(&providers, provider)
                 .with_context(|| format!("provider {} is not registered", provider))?;
             ensure_provider_ready(adapter)?;
+            ensure_approval_guardrail(approval, allow_interactive_provider)?;
             let request = RunRequest {
                 provider,
                 cwd,
@@ -219,6 +225,7 @@ fn main() -> Result<()> {
         Commands::Resume {
             run_id,
             approval,
+            allow_interactive_provider,
             prompt,
         } => {
             let previous = store.load_run(&run_id)?;
@@ -227,6 +234,7 @@ fn main() -> Result<()> {
             ensure_provider_ready(adapter)?;
             let prompt = prompt.unwrap_or_else(|| "Continue.".to_owned());
             let approval = approval.unwrap_or(previous.request.approval);
+            ensure_approval_guardrail(approval, allow_interactive_provider)?;
 
             let record = resume_run(&store, adapter, &previous, prompt, approval, print_event)?;
             println!();
@@ -293,4 +301,17 @@ fn ensure_provider_ready(provider: &dyn ProviderAdapter) -> Result<()> {
         probe.binary,
         probe.detail
     );
+}
+
+fn ensure_approval_guardrail(
+    approval: ApprovalMode,
+    allow_interactive_provider: bool,
+) -> Result<()> {
+    if approval == ApprovalMode::Confirm && !allow_interactive_provider {
+        bail!(
+            "approval=confirm requires --allow-interactive-provider so the provider can prompt for confirmation"
+        );
+    }
+
+    Ok(())
 }

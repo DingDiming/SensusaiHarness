@@ -55,6 +55,10 @@ Phase 1 also exposes a provider-independent approval policy:
 - `auto`: let the provider execute commands automatically
 - `confirm`: keep provider-side approval behavior enabled
 
+The CLI adds one guardrail on top:
+
+- `confirm` mode requires explicit opt-in through `--allow-interactive-provider`
+
 The initial store root is:
 
 - `SAH_HOME` when set
