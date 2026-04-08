@@ -12,6 +12,7 @@ use sah_provider::{ProviderAdapter, ProviderProbe};
 use sah_runtime::{execute_run, load_transcript, resume_run};
 use sah_store::{RunListFilters, Store};
 use serde::Serialize;
+use std::io::{self, Write};
 use std::path::PathBuf;
 use std::thread;
 use std::time::Duration;
@@ -101,8 +102,6 @@ enum Commands {
         provider: Option<ProviderKind>,
         #[arg(long)]
         approval: Option<ApprovalMode>,
-        #[arg(long, default_value_t = false)]
-        allow_interactive_provider: bool,
         #[arg(long, default_value = ".")]
         cwd: PathBuf,
         prompt: String,
@@ -116,8 +115,6 @@ enum Commands {
         run_id: String,
         #[arg(long)]
         approval: Option<ApprovalMode>,
-        #[arg(long, default_value_t = false)]
-        allow_interactive_provider: bool,
         prompt: Option<String>,
     },
 }
@@ -159,7 +156,8 @@ fn main() -> Result<()> {
     let config_path = config::resolve_config_path(cli.config.clone());
     let config_file = config::load_config(&config_path)?;
     let cli_sah_home = cli.sah_home.clone();
-    let runtime_defaults = config::resolve_defaults(&config_path, &config_file, cli_sah_home.clone())?;
+    let runtime_defaults =
+        config::resolve_defaults(&config_path, &config_file, cli_sah_home.clone())?;
     let store = Store::open(runtime_defaults.sah_home.clone())?;
     let providers = providers();
 
@@ -247,12 +245,7 @@ fn main() -> Result<()> {
                 let entries: Vec<RunListEntry> = runs
                     .into_iter()
                     .map(|record| {
-                        let summary = build_run_summary(
-                            &store,
-                            &record.id,
-                            None,
-                            None,
-                        )?;
+                        let summary = build_run_summary(&store, &record.id, None, None)?;
                         Ok(RunListEntry { record, summary })
                     })
                     .collect::<Result<_>>()?;
@@ -401,7 +394,6 @@ fn main() -> Result<()> {
         Commands::Run {
             provider,
             approval,
-            allow_interactive_provider,
             cwd,
             prompt,
         } => {
@@ -413,7 +405,7 @@ fn main() -> Result<()> {
             let adapter = resolve_provider(&providers, provider)
                 .with_context(|| format!("provider {} is not registered", provider))?;
             ensure_provider_ready(adapter)?;
-            ensure_approval_guardrail(approval, allow_interactive_provider)?;
+            confirm_if_required("run", provider, &cwd, &prompt, approval)?;
             let request = RunRequest {
                 provider,
                 cwd,
@@ -432,17 +424,23 @@ fn main() -> Result<()> {
         Commands::Resume {
             run_id,
             approval,
-            allow_interactive_provider,
             prompt,
         } => {
             let previous = store.load_run(&run_id)?;
-            let adapter = resolve_provider(&providers, previous.request.provider).with_context(
-                || format!("provider {} is not registered", previous.request.provider),
-            )?;
+            let adapter =
+                resolve_provider(&providers, previous.request.provider).with_context(|| {
+                    format!("provider {} is not registered", previous.request.provider)
+                })?;
             ensure_provider_ready(adapter)?;
             let prompt = prompt.unwrap_or_else(|| "Continue.".to_owned());
             let approval = approval.unwrap_or(previous.request.approval);
-            ensure_approval_guardrail(approval, allow_interactive_provider)?;
+            confirm_if_required(
+                "resume",
+                previous.request.provider,
+                &previous.request.cwd,
+                &prompt,
+                approval,
+            )?;
 
             let record = resume_run(&store, adapter, &previous, prompt, approval, print_event)?;
             println!();
@@ -542,8 +540,12 @@ fn summarize_workspace(workspace: &[WorkspaceSnapshot]) -> WorkspaceSummary {
     WorkspaceSummary {
         before_changed_files: before.map(|snapshot| snapshot.changed_file_count),
         after_changed_files: after.map(|snapshot| snapshot.changed_file_count),
-        before_has_diff: before.and_then(|snapshot| snapshot.diff_artifact.as_ref()).is_some(),
-        after_has_diff: after.and_then(|snapshot| snapshot.diff_artifact.as_ref()).is_some(),
+        before_has_diff: before
+            .and_then(|snapshot| snapshot.diff_artifact.as_ref())
+            .is_some(),
+        after_has_diff: after
+            .and_then(|snapshot| snapshot.diff_artifact.as_ref())
+            .is_some(),
     }
 }
 
@@ -554,11 +556,7 @@ fn format_optional_count(value: Option<usize>) -> String {
 }
 
 fn format_bool(value: bool) -> &'static str {
-    if value {
-        "yes"
-    } else {
-        "no"
-    }
+    if value { "yes" } else { "no" }
 }
 
 fn print_resolved_defaults(defaults: &config::ResolvedDefaults) {
@@ -674,17 +672,41 @@ fn ensure_provider_ready(provider: &dyn ProviderAdapter) -> Result<()> {
     );
 }
 
-fn ensure_approval_guardrail(
+fn confirm_if_required(
+    action: &str,
+    provider: ProviderKind,
+    cwd: &std::path::Path,
+    prompt: &str,
     approval: ApprovalMode,
-    allow_interactive_provider: bool,
 ) -> Result<()> {
-    if approval == ApprovalMode::Confirm && !allow_interactive_provider {
-        bail!(
-            "approval=confirm requires --allow-interactive-provider so the provider can prompt for confirmation"
-        );
+    if approval != ApprovalMode::Confirm {
+        return Ok(());
     }
 
-    Ok(())
+    println!(
+        "approval required: action={} provider={} cwd={}",
+        action,
+        provider,
+        cwd.display()
+    );
+    println!("prompt: {}", truncate(prompt, 160));
+    print!("Proceed with automatic execution? [y/N]: ");
+    io::stdout()
+        .flush()
+        .context("failed to flush approval prompt")?;
+
+    let mut input = String::new();
+    let bytes = io::stdin()
+        .read_line(&mut input)
+        .context("failed to read approval response")?;
+    if bytes == 0 {
+        bail!("approval cancelled: no confirmation received");
+    }
+
+    match input.trim().to_ascii_lowercase().as_str() {
+        "y" | "yes" => Ok(()),
+        _ => bail!("approval cancelled by user"),
+    }
 }
 
 fn run_duration_ms(record: &sah_domain::RunRecord) -> Option<u128> {

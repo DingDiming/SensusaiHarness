@@ -1,6 +1,8 @@
 use provider_claude::ClaudeProvider;
 use provider_codex::CodexProvider;
-use sah_domain::{ApprovalMode, ProviderKind, RunEvent, RunEventKind, RunRecord, RunRequest, RunStatus};
+use sah_domain::{
+    ApprovalMode, ProviderKind, RunEvent, RunEventKind, RunRecord, RunRequest, RunStatus,
+};
 use sah_provider::{CommandSpec, ProviderAdapter, ProviderProbe};
 use sah_runtime::{execute_run, load_transcript, resume_run};
 use sah_store::Store;
@@ -42,7 +44,12 @@ impl<A: ProviderAdapter> ProviderAdapter for FixtureProvider<A> {
         fixture_command(request.cwd.clone(), &self.run_fixture)
     }
 
-    fn build_resume_command(&self, record: &RunRecord, _prompt: &str) -> Option<CommandSpec> {
+    fn build_resume_command(
+        &self,
+        record: &RunRecord,
+        _prompt: &str,
+        _approval: ApprovalMode,
+    ) -> Option<CommandSpec> {
         Some(fixture_command(
             record.request.cwd.clone(),
             self.resume_fixture.as_ref()?,
@@ -93,12 +100,30 @@ fn codex_fixture_run_persists_transcript_and_artifacts() {
 
     let (loaded, events) = load_transcript(&store, &record.id).expect("load transcript");
     assert_eq!(loaded.status, RunStatus::Completed);
-    assert!(events.iter().any(|event| event.kind == RunEventKind::CommandStarted));
-    assert!(events.iter().any(|event| event.kind == RunEventKind::CommandFinished));
-    assert!(events.iter().any(|event| event.kind == RunEventKind::FileChange));
-    assert!(events.iter().any(|event| event.kind == RunEventKind::Completed));
+    assert!(
+        events
+            .iter()
+            .any(|event| event.kind == RunEventKind::CommandStarted)
+    );
+    assert!(
+        events
+            .iter()
+            .any(|event| event.kind == RunEventKind::CommandFinished)
+    );
+    assert!(
+        events
+            .iter()
+            .any(|event| event.kind == RunEventKind::FileChange)
+    );
+    assert!(
+        events
+            .iter()
+            .any(|event| event.kind == RunEventKind::Completed)
+    );
 
-    let commands = store.list_command_records(&record.id).expect("command records");
+    let commands = store
+        .list_command_records(&record.id)
+        .expect("command records");
     assert_eq!(commands.len(), 1);
     assert_eq!(
         store
@@ -106,6 +131,41 @@ fn codex_fixture_run_persists_transcript_and_artifacts() {
             .expect("final message")
             .as_deref(),
         Some("DONE")
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn confirm_mode_records_sah_approval_event() {
+    let root = unique_test_dir("codex-fixture-confirm");
+    let store = Store::open(root.join("store")).expect("store");
+    let workspace = root.join("workspace");
+    fs::create_dir_all(&workspace).expect("workspace");
+
+    let provider = FixtureProvider {
+        inner: CodexProvider::default(),
+        run_fixture: fixture_path("codex_run.stdout.jsonl"),
+        resume_fixture: None,
+    };
+
+    let record = execute_run(
+        &store,
+        &provider,
+        RunRequest {
+            provider: ProviderKind::Codex,
+            cwd: workspace,
+            approval: ApprovalMode::Confirm,
+            prompt: "fixture".to_owned(),
+        },
+        |_| {},
+    )
+    .expect("execute run");
+
+    let (_, events) = load_transcript(&store, &record.id).expect("load transcript");
+    assert!(
+        events.iter().any(|event| event.kind == RunEventKind::System
+            && event.summary == "approval confirmed by sah")
     );
 
     let _ = fs::remove_dir_all(root);
@@ -148,7 +208,10 @@ fn codex_fixture_resume_reuses_session_and_links_parent_run() {
     .expect("resume run");
 
     assert_eq!(resumed.status, RunStatus::Completed);
-    assert_eq!(resumed.resumed_from_run_id.as_deref(), Some(initial.id.as_str()));
+    assert_eq!(
+        resumed.resumed_from_run_id.as_deref(),
+        Some(initial.id.as_str())
+    );
     assert_eq!(resumed.provider_session_id.as_deref(), Some("thread-1"));
 
     let (_, resumed_events) = load_transcript(&store, &resumed.id).expect("resumed transcript");
@@ -187,7 +250,11 @@ fn claude_fixture_run_exports_and_deletes_cleanly() {
     assert_eq!(record.provider_session_id.as_deref(), Some("session-1"));
 
     let (_, events) = load_transcript(&store, &record.id).expect("transcript");
-    assert!(events.iter().any(|event| event.kind == RunEventKind::FileChange));
+    assert!(
+        events
+            .iter()
+            .any(|event| event.kind == RunEventKind::FileChange)
+    );
     assert!(events.iter().any(|event| event.summary == "DONE"));
 
     let export_path = root.join("export");
@@ -195,7 +262,12 @@ fn claude_fixture_run_exports_and_deletes_cleanly() {
         .export_run_bundle(&record.id, &export_path)
         .expect("export bundle");
     assert!(exported.join("events.jsonl").exists());
-    assert!(exported.join("artifacts").join("final-message.txt").exists());
+    assert!(
+        exported
+            .join("artifacts")
+            .join("final-message.txt")
+            .exists()
+    );
 
     store.delete_run(&record.id, false).expect("delete run");
     assert!(!store.root().join("runs").join(&record.id).exists());

@@ -22,15 +22,15 @@ impl ProviderAdapter for ClaudeProvider {
     }
 
     fn probe(&self) -> ProviderProbe {
-        probe_binary(self.kind(), self.display_name(), self.binary_name(), &["--version"])
+        probe_binary(
+            self.kind(),
+            self.display_name(),
+            self.binary_name(),
+            &["--version"],
+        )
     }
 
     fn build_command(&self, request: &RunRequest) -> CommandSpec {
-        let permission_mode = match request.approval {
-            ApprovalMode::Auto => "auto",
-            ApprovalMode::Confirm => "default",
-        };
-
         CommandSpec {
             program: self.binary_name().to_owned(),
             args: vec![
@@ -40,7 +40,7 @@ impl ProviderAdapter for ClaudeProvider {
                 "stream-json".to_owned(),
                 "--verbose".to_owned(),
                 "--permission-mode".to_owned(),
-                permission_mode.to_owned(),
+                "auto".to_owned(),
                 "--add-dir".to_owned(),
                 request.cwd.display().to_string(),
                 "--".to_owned(),
@@ -50,12 +50,13 @@ impl ProviderAdapter for ClaudeProvider {
         }
     }
 
-    fn build_resume_command(&self, record: &RunRecord, prompt: &str) -> Option<CommandSpec> {
+    fn build_resume_command(
+        &self,
+        record: &RunRecord,
+        prompt: &str,
+        _approval: ApprovalMode,
+    ) -> Option<CommandSpec> {
         let session_id = record.provider_session_id.as_ref()?;
-        let permission_mode = match record.request.approval {
-            ApprovalMode::Auto => "auto",
-            ApprovalMode::Confirm => "default",
-        };
 
         Some(CommandSpec {
             program: self.binary_name().to_owned(),
@@ -66,7 +67,7 @@ impl ProviderAdapter for ClaudeProvider {
                 "stream-json".to_owned(),
                 "--verbose".to_owned(),
                 "--permission-mode".to_owned(),
-                permission_mode.to_owned(),
+                "auto".to_owned(),
                 "--add-dir".to_owned(),
                 record.request.cwd.display().to_string(),
                 "--resume".to_owned(),
@@ -148,7 +149,11 @@ fn normalize_assistant(sequence: u64, raw: Value) -> Option<RunEvent> {
 }
 
 fn normalize_result(sequence: u64, raw: Value) -> Option<RunEvent> {
-    if raw.get("is_error").and_then(Value::as_bool).unwrap_or(false) {
+    if raw
+        .get("is_error")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
         let summary = raw
             .get("error")
             .and_then(Value::as_str)
@@ -182,7 +187,10 @@ fn normalize_result(sequence: u64, raw: Value) -> Option<RunEvent> {
         sequence,
         RunEventKind::Usage,
         ProviderKind::Claude.as_str(),
-        format!("tokens in={input} out={output} duration={}ms cost=${cost:.6}", duration_ms),
+        format!(
+            "tokens in={input} out={output} duration={}ms cost=${cost:.6}",
+            duration_ms
+        ),
         raw,
     ))
 }
@@ -290,13 +298,14 @@ mod tests {
     #[test]
     fn extracts_session_id_for_resume() {
         let provider = ClaudeProvider;
-        let session_id = provider.extract_session_id(r#"{"type":"assistant","session_id":"session-1"}"#);
+        let session_id =
+            provider.extract_session_id(r#"{"type":"assistant","session_id":"session-1"}"#);
 
         assert_eq!(session_id.as_deref(), Some("session-1"));
     }
 
     #[test]
-    fn maps_confirm_to_default_permission_mode() {
+    fn maps_confirm_to_auto_permission_mode() {
         let provider = ClaudeProvider;
         let command = provider.build_command(&RunRequest {
             provider: ProviderKind::Claude,
@@ -305,6 +314,42 @@ mod tests {
             prompt: "hi".to_owned(),
         });
 
-        assert!(command.args.windows(2).any(|pair| pair == ["--permission-mode", "default"]));
+        assert!(
+            command
+                .args
+                .windows(2)
+                .any(|pair| pair == ["--permission-mode", "auto"])
+        );
+    }
+
+    #[test]
+    fn resume_command_uses_auto_permission_mode_for_confirm() {
+        let provider = ClaudeProvider;
+        let record = RunRecord {
+            id: "run-1".to_owned(),
+            request: RunRequest {
+                provider: ProviderKind::Claude,
+                cwd: "/tmp".into(),
+                approval: ApprovalMode::Auto,
+                prompt: "hi".to_owned(),
+            },
+            status: sah_domain::RunStatus::Completed,
+            started_at_ms: 1,
+            finished_at_ms: Some(2),
+            exit_code: Some(0),
+            provider_session_id: Some("session-1".to_owned()),
+            resumed_from_run_id: None,
+        };
+
+        let command = provider
+            .build_resume_command(&record, "Continue.", ApprovalMode::Confirm)
+            .expect("command");
+
+        assert!(
+            command
+                .args
+                .windows(2)
+                .any(|pair| pair == ["--permission-mode", "auto"])
+        );
     }
 }

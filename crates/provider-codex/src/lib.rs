@@ -25,7 +25,12 @@ impl ProviderAdapter for CodexProvider {
     }
 
     fn probe(&self) -> ProviderProbe {
-        probe_binary(self.kind(), self.display_name(), self.binary_name(), &["--version"])
+        probe_binary(
+            self.kind(),
+            self.display_name(),
+            self.binary_name(),
+            &["--version"],
+        )
     }
 
     fn build_command(&self, request: &RunRequest) -> CommandSpec {
@@ -33,12 +38,10 @@ impl ProviderAdapter for CodexProvider {
             "exec".to_owned(),
             "--json".to_owned(),
             "--skip-git-repo-check".to_owned(),
+            "--full-auto".to_owned(),
             "--cd".to_owned(),
             request.cwd.display().to_string(),
         ];
-        if request.approval == ApprovalMode::Auto {
-            args.push("--full-auto".to_owned());
-        }
         args.push(request.prompt.clone());
 
         CommandSpec {
@@ -48,17 +51,20 @@ impl ProviderAdapter for CodexProvider {
         }
     }
 
-    fn build_resume_command(&self, record: &RunRecord, prompt: &str) -> Option<CommandSpec> {
+    fn build_resume_command(
+        &self,
+        record: &RunRecord,
+        prompt: &str,
+        _approval: ApprovalMode,
+    ) -> Option<CommandSpec> {
         let session_id = record.provider_session_id.as_ref()?;
         let mut args = vec![
             "exec".to_owned(),
             "resume".to_owned(),
             "--json".to_owned(),
             "--skip-git-repo-check".to_owned(),
+            "--full-auto".to_owned(),
         ];
-        if record.request.approval == ApprovalMode::Auto {
-            args.push("--full-auto".to_owned());
-        }
         args.push(session_id.clone());
         args.push(prompt.to_owned());
 
@@ -258,52 +264,52 @@ fn normalize_turn_completed(sequence: u64, raw: Value) -> RunEvent {
 
 impl CodexProvider {
     fn normalize_codex_stderr(&self, sequence: u64, line: &str) -> Option<RunEvent> {
-    let line = line.trim();
-    if line.is_empty() {
-        return None;
-    }
-
-    if self.suppress_html_stderr.get() {
-        if line.contains("</html>") {
-            self.suppress_html_stderr.set(false);
+        let line = line.trim();
+        if line.is_empty() {
+            return None;
         }
-        return None;
-    }
 
-    if line == "Reading additional input from stdin..." {
-        return None;
-    }
-
-    if line.contains("WARN codex_core::plugins::manifest: ignoring interface.defaultPrompt") {
-        return None;
-    }
-
-    if line.contains("WARN codex_core::shell_snapshot: Failed to delete shell snapshot") {
-        return None;
-    }
-
-    if line.contains("failed to warm featured plugin ids cache") {
-        if line.contains("<html>") {
-            self.suppress_html_stderr.set(true);
+        if self.suppress_html_stderr.get() {
+            if line.contains("</html>") {
+                self.suppress_html_stderr.set(false);
+            }
+            return None;
         }
-        return Some(RunEvent::plain(
+
+        if line == "Reading additional input from stdin..." {
+            return None;
+        }
+
+        if line.contains("WARN codex_core::plugins::manifest: ignoring interface.defaultPrompt") {
+            return None;
+        }
+
+        if line.contains("WARN codex_core::shell_snapshot: Failed to delete shell snapshot") {
+            return None;
+        }
+
+        if line.contains("failed to warm featured plugin ids cache") {
+            if line.contains("<html>") {
+                self.suppress_html_stderr.set(true);
+            }
+            return Some(RunEvent::plain(
+                sequence,
+                RunEventKind::System,
+                "codex.stderr",
+                "plugin catalog warning: featured plugin sync failed",
+            ));
+        }
+
+        if line.starts_with('<') {
+            return None;
+        }
+
+        Some(RunEvent::plain(
             sequence,
             RunEventKind::System,
             "codex.stderr",
-            "plugin catalog warning: featured plugin sync failed",
-        ));
-    }
-
-    if line.starts_with('<') {
-        return None;
-    }
-
-    Some(RunEvent::plain(
-        sequence,
-        RunEventKind::System,
-        "codex.stderr",
-        strip_log_prefix(line),
-    ))
+            strip_log_prefix(line),
+        ))
     }
 }
 
@@ -323,7 +329,13 @@ fn compact_line(text: &str) -> String {
     const MAX_LEN: usize = 120;
 
     let mut compact = text.replace('\n', " ");
-    compact.truncate(compact.char_indices().nth(MAX_LEN).map(|(idx, _)| idx).unwrap_or(compact.len()));
+    compact.truncate(
+        compact
+            .char_indices()
+            .nth(MAX_LEN)
+            .map(|(idx, _)| idx)
+            .unwrap_or(compact.len()),
+    );
     if text.chars().count() > MAX_LEN {
         compact.push_str("...");
     }
@@ -410,15 +422,14 @@ mod tests {
     #[test]
     fn extracts_thread_id_for_resume() {
         let provider = CodexProvider::default();
-        let session_id = provider.extract_session_id(
-            r#"{"type":"thread.started","thread_id":"abc-123"}"#,
-        );
+        let session_id =
+            provider.extract_session_id(r#"{"type":"thread.started","thread_id":"abc-123"}"#);
 
         assert_eq!(session_id.as_deref(), Some("abc-123"));
     }
 
     #[test]
-    fn uses_full_auto_only_in_auto_mode() {
+    fn uses_full_auto_for_sah_managed_confirmation() {
         let provider = CodexProvider::default();
         let auto = provider.build_command(&RunRequest {
             provider: ProviderKind::Codex,
@@ -434,6 +445,32 @@ mod tests {
         });
 
         assert!(auto.args.iter().any(|arg| arg == "--full-auto"));
-        assert!(!confirm.args.iter().any(|arg| arg == "--full-auto"));
+        assert!(confirm.args.iter().any(|arg| arg == "--full-auto"));
+    }
+
+    #[test]
+    fn resume_command_uses_full_auto_for_confirm_mode() {
+        let provider = CodexProvider::default();
+        let record = RunRecord {
+            id: "run-1".to_owned(),
+            request: RunRequest {
+                provider: ProviderKind::Codex,
+                cwd: "/tmp".into(),
+                approval: ApprovalMode::Auto,
+                prompt: "hi".to_owned(),
+            },
+            status: sah_domain::RunStatus::Completed,
+            started_at_ms: 1,
+            finished_at_ms: Some(2),
+            exit_code: Some(0),
+            provider_session_id: Some("thread-1".to_owned()),
+            resumed_from_run_id: None,
+        };
+
+        let command = provider
+            .build_resume_command(&record, "Continue.", ApprovalMode::Confirm)
+            .expect("command");
+
+        assert!(command.args.iter().any(|arg| arg == "--full-auto"));
     }
 }

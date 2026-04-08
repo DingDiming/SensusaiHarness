@@ -71,7 +71,12 @@ Supported environment variables:
 - `SAH_APPROVAL`
 - `SAH_HOME`
 
-When using `approval=confirm`, pass `--allow-interactive-provider` explicitly. This keeps the CLI from silently dropping into provider-managed confirmation prompts.
+Approval modes are now CLI-managed:
+
+- `auto`: execute immediately through the provider's automatic mode
+- `confirm`: `sah` prompts once before launch or resume, then runs the provider in automatic mode if approved
+
+Confirmed runs also record a `system` event with `approval confirmed by sah` at the start of the transcript.
 
 Each run now keeps:
 

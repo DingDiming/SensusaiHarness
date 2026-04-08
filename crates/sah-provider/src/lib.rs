@@ -27,7 +27,12 @@ pub trait ProviderAdapter {
     fn binary_name(&self) -> &'static str;
     fn probe(&self) -> ProviderProbe;
     fn build_command(&self, request: &RunRequest) -> CommandSpec;
-    fn build_resume_command(&self, record: &RunRecord, prompt: &str) -> Option<CommandSpec>;
+    fn build_resume_command(
+        &self,
+        record: &RunRecord,
+        prompt: &str,
+        approval: sah_domain::ApprovalMode,
+    ) -> Option<CommandSpec>;
 
     fn extract_session_id(&self, _line: &str) -> Option<String> {
         None
@@ -67,7 +72,11 @@ pub fn probe_binary(
                 binary,
                 available: true,
                 detail: "available".to_owned(),
-                version: if version.is_empty() { None } else { Some(version) },
+                version: if version.is_empty() {
+                    None
+                } else {
+                    Some(version)
+                },
             }
         }
         Ok(output) => ProviderProbe {
@@ -130,7 +139,9 @@ fn classify_json_event(raw: &Value) -> RunEventKind {
         .to_ascii_lowercase();
 
     match tag.as_str() {
-        "message" | "assistant" | "assistant_message" | "content_block_delta" => RunEventKind::Message,
+        "message" | "assistant" | "assistant_message" | "content_block_delta" => {
+            RunEventKind::Message
+        }
         "command_started" | "tool_use" => RunEventKind::CommandStarted,
         "command_finished" | "tool_result" => RunEventKind::CommandFinished,
         "usage" | "result" => RunEventKind::Usage,
@@ -150,7 +161,9 @@ fn summarize_json_event(raw: &Value) -> Option<String> {
         .or_else(|| raw.get("event"))
         .and_then(Value::as_str);
 
-    for key in ["message", "text", "content", "delta", "result", "error", "name"] {
+    for key in [
+        "message", "text", "content", "delta", "result", "error", "name",
+    ] {
         if let Some(value) = raw.get(key) {
             if let Some(summary) = flatten_value(value) {
                 return Some(match event_name {
@@ -191,7 +204,15 @@ pub fn summarize_file_change(raw: &Value) -> Option<String> {
     let action = extract_file_change_action(raw).unwrap_or_else(|| "file change".to_owned());
     if let Some(path) = find_string_field(
         raw,
-        &["file_path", "target_file", "new_path", "old_path", "filename", "relative_path", "path"],
+        &[
+            "file_path",
+            "target_file",
+            "new_path",
+            "old_path",
+            "filename",
+            "relative_path",
+            "path",
+        ],
     ) {
         return Some(format!("{action}: {path}"));
     }

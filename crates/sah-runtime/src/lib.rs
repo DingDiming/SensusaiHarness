@@ -37,7 +37,7 @@ where
     F: FnMut(&RunEvent),
 {
     let command_spec = provider
-        .build_resume_command(previous, &prompt)
+        .build_resume_command(previous, &prompt, approval)
         .ok_or_else(|| anyhow!("run {} has no resumable provider session id", previous.id))?;
 
     let mut record = store.create_run(RunRequest {
@@ -77,10 +77,7 @@ where
     thread::spawn(move || {
         let reader = BufReader::new(reader);
         for line in reader.lines().map_while(Result::ok) {
-            let _ = tx.send(StreamLine {
-                source,
-                line,
-            });
+            let _ = tx.send(StreamLine { source, line });
         }
     })
 }
@@ -105,6 +102,19 @@ where
             &snapshot.status_contents,
             snapshot.diff_contents.as_deref(),
         )?;
+    }
+
+    if record.request.approval == ApprovalMode::Confirm {
+        let approval_event = RunEvent::plain(
+            sequence,
+            RunEventKind::System,
+            "sah",
+            "approval confirmed by sah",
+        );
+        store.append_event(&record.id, &approval_event)?;
+        store.capture_event_artifacts(&record.id, &approval_event)?;
+        on_event(&approval_event);
+        sequence += 1;
     }
 
     let launch_event = RunEvent::plain(
@@ -141,7 +151,10 @@ where
             store.append_event(&record.id, &failure)?;
             on_event(&failure);
             store.finalize_run(&mut record, None)?;
-            return Err(anyhow!("failed to spawn provider for run {}: {error}", record.id));
+            return Err(anyhow!(
+                "failed to spawn provider for run {}: {error}",
+                record.id
+            ));
         }
     };
 
@@ -235,7 +248,13 @@ fn capture_workspace_snapshot(cwd: &Path, label: &str) -> Option<CapturedWorkspa
     let status_contents = run_git(cwd, ["status", "--porcelain=v1", "--untracked-files=all"])?;
     let diff_contents = run_git(
         cwd,
-        ["diff", "HEAD", "--no-ext-diff", "--submodule=diff", "--binary"],
+        [
+            "diff",
+            "HEAD",
+            "--no-ext-diff",
+            "--submodule=diff",
+            "--binary",
+        ],
     );
     let changed_file_count = status_contents
         .lines()

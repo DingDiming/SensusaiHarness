@@ -106,9 +106,12 @@ impl Store {
         }
 
         let mut records = Vec::new();
-        for entry in fs::read_dir(self.runs_dir())
-            .with_context(|| format!("failed to read runs directory {}", self.runs_dir().display()))?
-        {
+        for entry in fs::read_dir(self.runs_dir()).with_context(|| {
+            format!(
+                "failed to read runs directory {}",
+                self.runs_dir().display()
+            )
+        })? {
             let entry = entry?;
             let path = entry.path().join("run.json");
             if !path.exists() {
@@ -147,7 +150,10 @@ impl Store {
             bail!("run {} does not exist", run_id);
         }
         if destination.exists() {
-            bail!("export destination already exists: {}", destination.display());
+            bail!(
+                "export destination already exists: {}",
+                destination.display()
+            );
         }
 
         copy_dir_all(&source, destination)?;
@@ -157,7 +163,10 @@ impl Store {
     pub fn delete_run(&self, run_id: &str, force: bool) -> Result<()> {
         let record = self.load_run(run_id)?;
         if record.status == RunStatus::Running && !force {
-            bail!("run {} is still running; pass --force to delete it anyway", run_id);
+            bail!(
+                "run {} is still running; pass --force to delete it anyway",
+                run_id
+            );
         }
 
         let run_dir = self.run_dir(run_id);
@@ -252,10 +261,15 @@ impl Store {
 
         fs::create_dir_all(&workspace_dir)
             .with_context(|| format!("failed to create workspace artifact dir for {}", run_id))?;
-        fs::write(&metadata_path, serde_json::to_vec_pretty(snapshot)?)
-            .with_context(|| format!("failed to write workspace snapshot {}", metadata_path.display()))?;
-        fs::write(&status_path, status_contents)
-            .with_context(|| format!("failed to write workspace status {}", status_path.display()))?;
+        fs::write(&metadata_path, serde_json::to_vec_pretty(snapshot)?).with_context(|| {
+            format!(
+                "failed to write workspace snapshot {}",
+                metadata_path.display()
+            )
+        })?;
+        fs::write(&status_path, status_contents).with_context(|| {
+            format!("failed to write workspace status {}", status_path.display())
+        })?;
 
         if let Some(diff_contents) = diff_contents {
             if !diff_contents.is_empty() {
@@ -356,8 +370,9 @@ impl Store {
 
     fn write_text_file(&self, path: &Path, contents: &str) -> Result<()> {
         if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)
-                .with_context(|| format!("failed to create artifact directory {}", parent.display()))?;
+            fs::create_dir_all(parent).with_context(|| {
+                format!("failed to create artifact directory {}", parent.display())
+            })?;
         }
         fs::write(path, contents)
             .with_context(|| format!("failed to write artifact {}", path.display()))
@@ -475,7 +490,10 @@ fn command_output_artifact(event: &RunEvent) -> Option<(String, String)> {
         return None;
     }
 
-    Some((format!("artifacts/commands/{id}.stdout.txt"), output.to_owned()))
+    Some((
+        format!("artifacts/commands/{id}.stdout.txt"),
+        output.to_owned(),
+    ))
 }
 
 fn provider_from_source(source: &str) -> ProviderKind {
@@ -501,8 +519,12 @@ fn merge_command_record(existing: CommandRecord, incoming: CommandRecord) -> Com
 }
 
 fn copy_dir_all(source: &Path, destination: &Path) -> Result<()> {
-    fs::create_dir_all(destination)
-        .with_context(|| format!("failed to create export directory {}", destination.display()))?;
+    fs::create_dir_all(destination).with_context(|| {
+        format!(
+            "failed to create export directory {}",
+            destination.display()
+        )
+    })?;
 
     for entry in fs::read_dir(source)
         .with_context(|| format!("failed to read source directory {}", source.display()))?
@@ -580,7 +602,9 @@ mod tests {
         );
 
         let final_message = fs::read_to_string(
-            store.artifacts_dir_for_run(&record.id).join("final-message.txt"),
+            store
+                .artifacts_dir_for_run(&record.id)
+                .join("final-message.txt"),
         )
         .expect("final message");
         assert_eq!(final_message, "final answer");
@@ -757,7 +781,9 @@ mod tests {
             })
             .expect("run");
         let event = RunEvent::plain(1, RunEventKind::Message, "codex", "hello export");
-        store.append_event(&record.id, &event).expect("append event");
+        store
+            .append_event(&record.id, &event)
+            .expect("append event");
         store
             .capture_event_artifacts(&record.id, &event)
             .expect("capture artifacts");
@@ -770,7 +796,12 @@ mod tests {
         assert_eq!(exported, destination);
         assert!(exported.join("run.json").exists());
         assert!(exported.join("events.jsonl").exists());
-        assert!(exported.join("artifacts").join("final-message.txt").exists());
+        assert!(
+            exported
+                .join("artifacts")
+                .join("final-message.txt")
+                .exists()
+        );
 
         let _ = fs::remove_dir_all(root);
         let _ = fs::remove_dir_all(export_root);
@@ -789,7 +820,9 @@ mod tests {
                 prompt: "delete".to_owned(),
             })
             .expect("run");
-        store.finalize_run(&mut record, Some(0)).expect("finalize run");
+        store
+            .finalize_run(&mut record, Some(0))
+            .expect("finalize run");
 
         store.delete_run(&record.id, false).expect("delete run");
         assert!(!root.join("runs").join(&record.id).exists());
@@ -838,10 +871,16 @@ mod tests {
             .expect("run");
 
         store
-            .append_event(&record.id, &RunEvent::plain(1, RunEventKind::Message, "codex", "one"))
+            .append_event(
+                &record.id,
+                &RunEvent::plain(1, RunEventKind::Message, "codex", "one"),
+            )
             .expect("append first");
         store
-            .append_event(&record.id, &RunEvent::plain(2, RunEventKind::Message, "codex", "two"))
+            .append_event(
+                &record.id,
+                &RunEvent::plain(2, RunEventKind::Message, "codex", "two"),
+            )
             .expect("append second");
 
         let path = root.join("runs").join(&record.id).join("events.jsonl");
@@ -876,7 +915,9 @@ mod tests {
             .capture_event_artifacts(&record.id, &event)
             .expect("capture artifacts");
 
-        let message = store.read_final_message(&record.id).expect("read final message");
+        let message = store
+            .read_final_message(&record.id)
+            .expect("read final message");
         assert_eq!(message.as_deref(), Some("done"));
 
         let _ = fs::remove_dir_all(root);

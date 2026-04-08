@@ -44,8 +44,8 @@ pub fn load_config(path: &Path) -> Result<CliConfigFile> {
         return Ok(CliConfigFile::default());
     }
 
-    let bytes = fs::read(path)
-        .with_context(|| format!("failed to read config file {}", path.display()))?;
+    let bytes =
+        fs::read(path).with_context(|| format!("failed to read config file {}", path.display()))?;
     Ok(serde_json::from_slice(&bytes)?)
 }
 
@@ -56,7 +56,8 @@ pub fn save_config(path: &Path, file: &CliConfigFile) -> Result<()> {
     }
 
     let bytes = serde_json::to_vec_pretty(file)?;
-    fs::write(path, bytes).with_context(|| format!("failed to write config file {}", path.display()))
+    fs::write(path, bytes)
+        .with_context(|| format!("failed to write config file {}", path.display()))
 }
 
 pub fn resolve_defaults(
@@ -172,7 +173,10 @@ fn resolve_sah_home(
     }
 
     if let Some(path) = env::var_os(ENV_HOME) {
-        return Ok((normalize_store_home(PathBuf::from(path))?, format!("env:{ENV_HOME}")));
+        return Ok((
+            normalize_store_home(PathBuf::from(path))?,
+            format!("env:{ENV_HOME}"),
+        ));
     }
 
     if let Some(path) = &file.sah_home {

@@ -54,11 +54,9 @@ Phase 1 normalizes provider output into a small internal event set:
 Phase 1 also exposes a provider-independent approval policy:
 
 - `auto`: let the provider execute commands automatically
-- `confirm`: keep provider-side approval behavior enabled
+- `confirm`: require a one-time confirmation inside `sah`, then run the provider in automatic mode
 
-The CLI adds one guardrail on top:
-
-- `confirm` mode requires explicit opt-in through `--allow-interactive-provider`
+When a confirmed run proceeds, the runtime records a `system` event with `approval confirmed by sah` before the provider launch event.
 
 Phase 1.5 adds persistent CLI defaults:
 
