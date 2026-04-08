@@ -88,6 +88,8 @@ Session-oriented CLI commands aggregate runs by `provider + provider_session_id`
 - `sessions inspect` shows the ordered run history within one provider session
 - `continue` resumes the latest run in a session by session ref instead of by run id
 
+`browse` adds a lightweight interactive terminal browser on top of the same persisted store. It reuses run summaries and transcript/artifact readers rather than introducing a separate cache or UI backend.
+
 End-to-end regression coverage now lives under `crates/sah-runtime/tests/` and replays fixture provider stdout through the real runtime, store, and parser stack.
 
 ## Legacy Policy

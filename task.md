@@ -12,7 +12,7 @@
 
 - [x] Add a native `sah` approval flow so confirmation is managed by the CLI instead of provider-specific interactive prompts
 - [x] Add session-oriented commands for browsing and continuing prior conversations without depending on raw run IDs alone
-- [ ] Add an interactive terminal run browser for recent runs, transcripts, commands, and artifacts
+- [x] Add an interactive terminal run browser for recent runs, transcripts, commands, and artifacts
 - [ ] Add run retention controls such as prune or archive for old local history and exported bundles
 - [ ] Add machine-readable export metadata so a run bundle can be inspected or replayed consistently across environments
 

@@ -38,6 +38,7 @@ Phase 1 commands in the new CLI:
 - `config show [--json]`
 - `config set [--provider codex|claude] [--approval auto|confirm] [--default-sah-home PATH]`
 - `continue <provider:session-id> [--approval auto|confirm] [prompt]`
+- `browse [--limit N] [--provider codex|claude] [--status running|completed|failed]`
 - `doctor`
 - `doctor --json`
 - `delete <run-id> [--force]`
@@ -86,6 +87,8 @@ Session-oriented browsing and continuation are available for runs that expose a 
 - `sessions list` shows resumable conversations grouped by provider session
 - `sessions inspect <provider:session-id>` shows the run history inside a session
 - `continue <provider:session-id>` resumes the latest run in that session without looking up a raw run id
+
+`browse` provides a lightweight interactive terminal browser for recent runs. It lets you pick a run and switch between overview, transcript, commands, workspace, and artifact views from the terminal.
 
 Each run now keeps:
 

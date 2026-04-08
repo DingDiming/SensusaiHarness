@@ -12,8 +12,9 @@ use sah_provider::{ProviderAdapter, ProviderProbe};
 use sah_runtime::{execute_run, load_transcript, resume_run};
 use sah_store::{RunListFilters, Store};
 use serde::Serialize;
+use std::fs;
 use std::io::{self, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::Duration;
 
@@ -80,6 +81,14 @@ enum Commands {
         #[arg(long)]
         approval: Option<ApprovalMode>,
         prompt: Option<String>,
+    },
+    Browse {
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+        #[arg(long)]
+        provider: Option<ProviderKind>,
+        #[arg(long)]
+        status: Option<RunStatus>,
     },
     Doctor {
         #[arg(long, default_value_t = false)]
@@ -265,6 +274,13 @@ fn main() -> Result<()> {
             if let Some(parent) = &record.resumed_from_run_id {
                 println!("resumed_from: {}", parent);
             }
+        }
+        Commands::Browse {
+            limit,
+            provider,
+            status,
+        } => {
+            browse_runs(&store, limit, RunListFilters { provider, status })?;
         }
         Commands::Doctor { json } => {
             let probes: Vec<ProviderProbe> =
@@ -605,6 +621,207 @@ fn print_probe(probe: ProviderProbe) {
     );
 }
 
+fn browse_runs(store: &Store, limit: usize, filters: RunListFilters) -> Result<()> {
+    loop {
+        let runs = store.list_runs_filtered(limit, filters)?;
+        println!("recent runs:");
+        if runs.is_empty() {
+            println!("  none");
+        } else {
+            for (index, record) in runs.iter().enumerate() {
+                let summary = build_run_summary(store, &record.id, None, None)?;
+                println!(
+                    "  {}. {} provider={} status={} approval={} commands={} final={}",
+                    index + 1,
+                    record.id,
+                    record.request.provider,
+                    record.status,
+                    record.request.approval,
+                    summary.commands.total,
+                    summary
+                        .final_message_preview
+                        .as_deref()
+                        .map(|message| truncate(message, 48))
+                        .unwrap_or_else(|| "-".to_owned()),
+                );
+            }
+        }
+
+        let input = prompt_line("Select run number, r to refresh, q to quit")?;
+        match input.as_str() {
+            "" | "r" | "refresh" => continue,
+            "q" | "quit" => break,
+            _ => {
+                let index: usize = input
+                    .parse()
+                    .with_context(|| format!("invalid run selection: {}", input))?;
+                let Some(record) = runs.get(index.saturating_sub(1)) else {
+                    bail!("run selection {} is out of range", index);
+                };
+                browse_run_detail(store, &record.id)?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn browse_run_detail(store: &Store, run_id: &str) -> Result<()> {
+    loop {
+        let record = store.load_run(run_id)?;
+        let commands = store.list_command_records(run_id)?;
+        let workspace = store.list_workspace_snapshots(run_id)?;
+        let summary = build_run_summary(store, run_id, Some(&commands), Some(&workspace))?;
+        let artifacts_dir = store.artifacts_dir_for_run(run_id);
+
+        print_run_overview(&record, &summary, &artifacts_dir);
+        println!("views: [t]ranscript [c]ommands [w]orkspace [a]rtifacts [b]ack [q]uit");
+
+        match prompt_line("Select view")?.as_str() {
+            "t" | "transcript" => {
+                let (_, events) = load_transcript(store, run_id)?;
+                println!();
+                println!("transcript:");
+                for event in events {
+                    print_event(&event);
+                }
+                println!();
+            }
+            "c" | "commands" => {
+                println!();
+                println!("commands:");
+                if commands.is_empty() {
+                    println!("  none");
+                } else {
+                    for command in &commands {
+                        println!(
+                            "  - {} [{}] exit={} cmd={}",
+                            command.id,
+                            command.status,
+                            command
+                                .exit_code
+                                .map(|code| code.to_string())
+                                .unwrap_or_else(|| "-".to_owned()),
+                            command.command
+                        );
+                        if let Some(path) = &command.output_artifact {
+                            println!("    output: {}", artifacts_dir.join(path).display());
+                        }
+                    }
+                }
+                println!();
+            }
+            "w" | "workspace" => {
+                println!();
+                println!("workspace:");
+                if workspace.is_empty() {
+                    println!("  none");
+                } else {
+                    for snapshot in &workspace {
+                        println!(
+                            "  - {} changed_files={} git_root={}",
+                            snapshot.label,
+                            snapshot.changed_file_count,
+                            snapshot.git_root.as_deref().unwrap_or("-")
+                        );
+                        if let Some(path) = &snapshot.status_artifact {
+                            println!("    status: {}", artifacts_dir.join(path).display());
+                        }
+                        if let Some(path) = &snapshot.diff_artifact {
+                            println!("    diff: {}", artifacts_dir.join(path).display());
+                        }
+                    }
+                }
+                println!();
+            }
+            "a" | "artifacts" => {
+                println!();
+                println!("artifacts:");
+                for path in list_artifact_paths(&artifacts_dir)? {
+                    println!("  - {}", path.display());
+                }
+                println!();
+            }
+            "b" | "back" => break,
+            "q" | "quit" => std::process::exit(0),
+            "" | "o" | "overview" => {}
+            other => bail!("unsupported view selection: {}", other),
+        }
+    }
+
+    Ok(())
+}
+
+fn print_run_overview(record: &sah_domain::RunRecord, summary: &RunSummary, artifacts_dir: &Path) {
+    println!();
+    println!("run_id: {}", record.id);
+    println!("provider: {}", record.request.provider);
+    println!("status: {}", record.status);
+    println!("approval: {}", record.request.approval);
+    println!("cwd: {}", record.request.cwd.display());
+    println!("artifacts: {}", artifacts_dir.display());
+    println!(
+        "summary: commands={} completed={} failed={} in_progress={} changed={}=>{} diff={}=>{} final={}",
+        summary.commands.total,
+        summary.commands.completed,
+        summary.commands.failed,
+        summary.commands.in_progress,
+        format_optional_count(summary.workspace.before_changed_files),
+        format_optional_count(summary.workspace.after_changed_files),
+        format_bool(summary.workspace.before_has_diff),
+        format_bool(summary.workspace.after_has_diff),
+        summary
+            .final_message_preview
+            .as_deref()
+            .map(|message| truncate(message, 120))
+            .unwrap_or_else(|| "-".to_owned()),
+    );
+}
+
+fn list_artifact_paths(root: &Path) -> Result<Vec<PathBuf>> {
+    let mut paths = Vec::new();
+    if !root.exists() {
+        return Ok(paths);
+    }
+
+    collect_artifact_paths(root, root, &mut paths)?;
+    paths.sort();
+    Ok(paths)
+}
+
+fn collect_artifact_paths(root: &Path, current: &Path, paths: &mut Vec<PathBuf>) -> Result<()> {
+    for entry in fs::read_dir(current)
+        .with_context(|| format!("failed to read artifact directory {}", current.display()))?
+    {
+        let entry = entry?;
+        let path = entry.path();
+        if entry.file_type()?.is_dir() {
+            collect_artifact_paths(root, &path, paths)?;
+        } else if entry.file_type()?.is_file() {
+            paths.push(path.strip_prefix(root)?.to_path_buf());
+        }
+    }
+
+    Ok(())
+}
+
+fn prompt_line(prompt: &str) -> Result<String> {
+    print!("{prompt}: ");
+    io::stdout()
+        .flush()
+        .with_context(|| format!("failed to flush prompt: {}", prompt))?;
+
+    let mut input = String::new();
+    let bytes = io::stdin()
+        .read_line(&mut input)
+        .with_context(|| format!("failed to read prompt input: {}", prompt))?;
+    if bytes == 0 {
+        return Ok("q".to_owned());
+    }
+
+    Ok(input.trim().to_owned())
+}
+
 fn resolve_session(store: &Store, value: &str) -> Result<SessionRecord> {
     if let Some((provider, provider_session_id)) = parse_session_ref(value) {
         let session = store
@@ -922,6 +1139,25 @@ mod tests {
 
         let error = resolve_session(&store, "shared").expect_err("ambiguous session");
         assert!(error.to_string().contains("ambiguous"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn lists_artifact_paths_relative_to_root() {
+        let root = unique_test_dir("lists-artifact-paths-relative-to-root");
+        fs::create_dir_all(root.join("commands")).expect("commands dir");
+        fs::write(root.join("final-message.txt"), "done").expect("final message");
+        fs::write(root.join("commands").join("item_1.json"), "{}").expect("command json");
+
+        let paths = list_artifact_paths(&root).expect("artifact paths");
+        assert_eq!(
+            paths,
+            vec![
+                PathBuf::from("commands/item_1.json"),
+                PathBuf::from("final-message.txt"),
+            ]
+        );
 
         let _ = fs::remove_dir_all(root);
     }
