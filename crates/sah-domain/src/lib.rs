@@ -144,6 +144,16 @@ pub struct CommandRecord {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct WorkspaceSnapshot {
+    pub label: String,
+    pub captured_at_ms: u128,
+    pub git_root: Option<String>,
+    pub changed_file_count: usize,
+    pub status_artifact: Option<String>,
+    pub diff_artifact: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RunEvent {
     pub sequence: u64,
     pub ts_ms: u128,

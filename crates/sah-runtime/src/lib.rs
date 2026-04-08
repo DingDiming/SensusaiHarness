@@ -1,8 +1,9 @@
 use anyhow::{Context, Result, anyhow};
-use sah_domain::{RunEvent, RunEventKind, RunRecord, RunRequest};
+use sah_domain::{RunEvent, RunEventKind, RunRecord, RunRequest, WorkspaceSnapshot, now_timestamp_ms};
 use sah_provider::ProviderAdapter;
 use sah_store::Store;
 use std::io::{BufRead, BufReader, Read};
+use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::mpsc::{self, Sender};
 use std::thread;
@@ -92,6 +93,15 @@ where
 {
     let mut sequence = 1_u64;
 
+    if let Some(snapshot) = capture_workspace_snapshot(&command_spec.cwd, "before") {
+        store.save_workspace_snapshot(
+            &record.id,
+            &snapshot.snapshot,
+            &snapshot.status_contents,
+            snapshot.diff_contents.as_deref(),
+        )?;
+    }
+
     let launch_event = RunEvent::plain(
         sequence,
         RunEventKind::System,
@@ -172,6 +182,15 @@ where
         .join()
         .map_err(|_| anyhow!("stderr reader thread panicked"))?;
 
+    if let Some(snapshot) = capture_workspace_snapshot(&command_spec.cwd, "after") {
+        store.save_workspace_snapshot(
+            &record.id,
+            &snapshot.snapshot,
+            &snapshot.status_contents,
+            snapshot.diff_contents.as_deref(),
+        )?;
+    }
+
     store.finalize_run(&mut record, status.code())?;
 
     let finish_kind = if status.success() {
@@ -197,4 +216,60 @@ where
     on_event(&finish_event);
 
     Ok(record)
+}
+
+struct CapturedWorkspaceSnapshot {
+    snapshot: WorkspaceSnapshot,
+    status_contents: String,
+    diff_contents: Option<String>,
+}
+
+fn capture_workspace_snapshot(cwd: &Path, label: &str) -> Option<CapturedWorkspaceSnapshot> {
+    let git_root = run_git(cwd, ["rev-parse", "--show-toplevel"])?;
+    let git_root = git_root.trim().to_owned();
+    let status_contents = run_git(cwd, ["status", "--porcelain=v1", "--untracked-files=all"])?;
+    let diff_contents = run_git(
+        cwd,
+        ["diff", "HEAD", "--no-ext-diff", "--submodule=diff", "--binary"],
+    );
+    let changed_file_count = status_contents
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .count();
+
+    let snapshot = WorkspaceSnapshot {
+        label: label.to_owned(),
+        captured_at_ms: now_timestamp_ms(),
+        git_root: Some(git_root),
+        changed_file_count,
+        status_artifact: Some(format!("workspace/{label}.status.txt")),
+        diff_artifact: diff_contents
+            .as_ref()
+            .filter(|diff| !diff.is_empty())
+            .map(|_| format!("workspace/{label}.diff.patch")),
+    };
+
+    Some(CapturedWorkspaceSnapshot {
+        snapshot,
+        status_contents,
+        diff_contents,
+    })
+}
+
+fn run_git<I, S>(cwd: &Path, args: I) -> Option<String>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<std::ffi::OsStr>,
+{
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(cwd)
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    Some(String::from_utf8_lossy(&output.stdout).into_owned())
 }

@@ -36,6 +36,9 @@ Each run is stored under a local run directory:
 - `artifacts/final-message.txt`: latest assistant message
 - `artifacts/commands/*.json`: normalized command records
 - `artifacts/commands/*.stdout.txt`: captured command stdout when available
+- `artifacts/workspace/*.json`: workspace snapshot metadata
+- `artifacts/workspace/*.status.txt`: git status snapshots before and after the run
+- `artifacts/workspace/*.diff.patch`: git diff against `HEAD` when changes exist
 
 Phase 1 normalizes provider output into a small internal event set:
 

@@ -64,6 +64,7 @@ fn main() -> Result<()> {
         Commands::Inspect { run_id } => {
             let record = store.load_run(&run_id)?;
             let commands = store.list_command_records(&run_id)?;
+            let workspace = store.list_workspace_snapshots(&run_id)?;
             let artifacts_dir = store.artifacts_dir_for_run(&run_id);
 
             println!("run_id: {}", record.id);
@@ -98,6 +99,28 @@ fn main() -> Result<()> {
                     );
                     if let Some(path) = command.output_artifact {
                         println!("  output: {}", artifacts_dir.join(path).display());
+                    }
+                }
+            }
+
+            if workspace.is_empty() {
+                println!();
+                println!("workspace: none");
+            } else {
+                println!();
+                println!("workspace:");
+                for snapshot in workspace {
+                    println!(
+                        "- {} changed_files={} git_root={}",
+                        snapshot.label,
+                        snapshot.changed_file_count,
+                        snapshot.git_root.unwrap_or_else(|| "-".to_owned())
+                    );
+                    if let Some(path) = snapshot.status_artifact {
+                        println!("  status: {}", artifacts_dir.join(path).display());
+                    }
+                    if let Some(path) = snapshot.diff_artifact {
+                        println!("  diff: {}", artifacts_dir.join(path).display());
                     }
                 }
             }

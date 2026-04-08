@@ -42,6 +42,12 @@ Phase 1 commands in the new CLI:
 - `watch`
 - `resume <run-id> [prompt]`
 
+Each run now keeps:
+
+- normalized event transcripts
+- command records and stdout artifacts
+- workspace snapshots before and after execution when `cwd` is inside a Git repository
+
 Validation:
 
 ```bash

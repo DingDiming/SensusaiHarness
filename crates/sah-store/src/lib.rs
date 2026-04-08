@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use sah_domain::{
     CommandRecord, CommandStatus, ProviderKind, RunEvent, RunEventKind, RunRecord, RunRequest,
-    RunStatus, now_timestamp_ms,
+    RunStatus, WorkspaceSnapshot, now_timestamp_ms,
 };
 use serde_json::Value;
 use std::env;
@@ -131,6 +131,62 @@ impl Store {
         self.artifacts_dir(run_id)
     }
 
+    pub fn save_workspace_snapshot(
+        &self,
+        run_id: &str,
+        snapshot: &WorkspaceSnapshot,
+        status_contents: &str,
+        diff_contents: Option<&str>,
+    ) -> Result<()> {
+        let workspace_dir = self.workspace_dir(run_id);
+        let metadata_path = workspace_dir.join(format!("{}.json", snapshot.label));
+        let status_path = workspace_dir.join(format!("{}.status.txt", snapshot.label));
+
+        fs::create_dir_all(&workspace_dir)
+            .with_context(|| format!("failed to create workspace artifact dir for {}", run_id))?;
+        fs::write(&metadata_path, serde_json::to_vec_pretty(snapshot)?)
+            .with_context(|| format!("failed to write workspace snapshot {}", metadata_path.display()))?;
+        fs::write(&status_path, status_contents)
+            .with_context(|| format!("failed to write workspace status {}", status_path.display()))?;
+
+        if let Some(diff_contents) = diff_contents {
+            if !diff_contents.is_empty() {
+                let diff_path = workspace_dir.join(format!("{}.diff.patch", snapshot.label));
+                fs::write(&diff_path, diff_contents).with_context(|| {
+                    format!("failed to write workspace diff {}", diff_path.display())
+                })?;
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn list_workspace_snapshots(&self, run_id: &str) -> Result<Vec<WorkspaceSnapshot>> {
+        let dir = self.workspace_dir(run_id);
+        if !dir.exists() {
+            return Ok(Vec::new());
+        }
+
+        let mut snapshots = Vec::new();
+        for entry in fs::read_dir(&dir)
+            .with_context(|| format!("failed to read workspace directory {}", dir.display()))?
+        {
+            let entry = entry?;
+            let path = entry.path();
+            if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+                continue;
+            }
+
+            let bytes = fs::read(&path)
+                .with_context(|| format!("failed to read workspace snapshot {}", path.display()))?;
+            let snapshot: WorkspaceSnapshot = serde_json::from_slice(&bytes)?;
+            snapshots.push(snapshot);
+        }
+
+        snapshots.sort_by_key(|snapshot| (snapshot.captured_at_ms, snapshot.label.clone()));
+        Ok(snapshots)
+    }
+
     pub fn finalize_run(&self, record: &mut RunRecord, exit_code: Option<i32>) -> Result<()> {
         record.exit_code = exit_code;
         record.finished_at_ms = Some(now_timestamp_ms());
@@ -160,6 +216,10 @@ impl Store {
 
     fn commands_dir(&self, run_id: &str) -> PathBuf {
         self.artifacts_dir(run_id).join("commands")
+    }
+
+    fn workspace_dir(&self, run_id: &str) -> PathBuf {
+        self.artifacts_dir(run_id).join("workspace")
     }
 
     fn command_record_file(&self, run_id: &str, command_id: &str) -> PathBuf {
