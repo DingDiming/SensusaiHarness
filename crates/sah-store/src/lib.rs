@@ -1,9 +1,10 @@
 use anyhow::{Context, Result, bail};
 use sah_domain::{
     CommandRecord, CommandStatus, ProviderKind, RunEvent, RunEventKind, RunRecord, RunRequest,
-    RunStatus, WorkspaceSnapshot, now_timestamp_ms,
+    RunStatus, SessionRecord, WorkspaceSnapshot, now_timestamp_ms,
 };
 use serde_json::Value;
+use std::collections::HashMap;
 use std::env;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
@@ -142,6 +143,98 @@ impl Store {
         });
         records.truncate(limit);
         Ok(records)
+    }
+
+    pub fn list_sessions(
+        &self,
+        limit: usize,
+        provider: Option<ProviderKind>,
+    ) -> Result<Vec<SessionRecord>> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+
+        let runs = self.list_runs_filtered(
+            usize::MAX,
+            RunListFilters {
+                provider,
+                status: None,
+            },
+        )?;
+        let mut sessions: HashMap<(ProviderKind, String), SessionRecord> = HashMap::new();
+
+        for record in runs {
+            let Some(provider_session_id) = record.provider_session_id.clone() else {
+                continue;
+            };
+            let key = (record.request.provider, provider_session_id.clone());
+            let last_activity_at_ms = record.finished_at_ms.unwrap_or(record.started_at_ms);
+            let final_message_preview = self.read_final_message(&record.id)?;
+
+            match sessions.get_mut(&key) {
+                Some(session) => {
+                    session.run_count += 1;
+                    session.first_started_at_ms =
+                        session.first_started_at_ms.min(record.started_at_ms);
+
+                    if last_activity_at_ms >= session.last_activity_at_ms {
+                        session.latest_run_id = record.id.clone();
+                        session.latest_status = record.status;
+                        session.latest_approval = record.request.approval;
+                        session.cwd = record.request.cwd.clone();
+                        session.latest_prompt = record.request.prompt.clone();
+                        session.last_activity_at_ms = last_activity_at_ms;
+                        session.final_message_preview = final_message_preview;
+                    }
+                }
+                None => {
+                    sessions.insert(
+                        key,
+                        SessionRecord {
+                            provider: record.request.provider,
+                            provider_session_id,
+                            latest_run_id: record.id.clone(),
+                            latest_status: record.status,
+                            latest_approval: record.request.approval,
+                            cwd: record.request.cwd.clone(),
+                            latest_prompt: record.request.prompt.clone(),
+                            first_started_at_ms: record.started_at_ms,
+                            last_activity_at_ms,
+                            run_count: 1,
+                            final_message_preview,
+                        },
+                    );
+                }
+            }
+        }
+
+        let mut sessions: Vec<_> = sessions.into_values().collect();
+        sessions.sort_by(|left, right| {
+            right
+                .last_activity_at_ms
+                .cmp(&left.last_activity_at_ms)
+                .then_with(|| right.latest_run_id.cmp(&left.latest_run_id))
+        });
+        sessions.truncate(limit);
+        Ok(sessions)
+    }
+
+    pub fn list_runs_for_session(
+        &self,
+        provider: ProviderKind,
+        provider_session_id: &str,
+    ) -> Result<Vec<RunRecord>> {
+        Ok(self
+            .list_runs_filtered(
+                usize::MAX,
+                RunListFilters {
+                    provider: Some(provider),
+                    status: None,
+                },
+            )?
+            .into_iter()
+            .filter(|record| record.provider_session_id.as_deref() == Some(provider_session_id))
+            .collect())
     }
 
     pub fn export_run_bundle(&self, run_id: &str, destination: &Path) -> Result<PathBuf> {
@@ -919,6 +1012,119 @@ mod tests {
             .read_final_message(&record.id)
             .expect("read final message");
         assert_eq!(message.as_deref(), Some("done"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn groups_runs_into_sessions() {
+        let root = unique_test_dir("groups-runs-into-sessions");
+        let store = Store::open(root.clone()).expect("store");
+
+        let mut first = store
+            .create_run(RunRequest {
+                provider: ProviderKind::Codex,
+                cwd: root.clone(),
+                approval: sah_domain::ApprovalMode::Auto,
+                prompt: "FIRST".to_owned(),
+            })
+            .expect("first run");
+        first.provider_session_id = Some("thread-1".to_owned());
+        first.started_at_ms = 100;
+        first.finished_at_ms = Some(150);
+        first.status = RunStatus::Completed;
+        store.save_run(&first).expect("save first");
+        store
+            .capture_event_artifacts(
+                &first.id,
+                &RunEvent::plain(1, RunEventKind::Message, "codex", "FIRST"),
+            )
+            .expect("first message");
+
+        let mut second = store
+            .create_run(RunRequest {
+                provider: ProviderKind::Codex,
+                cwd: root.clone(),
+                approval: sah_domain::ApprovalMode::Confirm,
+                prompt: "SECOND".to_owned(),
+            })
+            .expect("second run");
+        second.provider_session_id = Some("thread-1".to_owned());
+        second.started_at_ms = 200;
+        second.finished_at_ms = Some(250);
+        second.status = RunStatus::Completed;
+        store.save_run(&second).expect("save second");
+        store
+            .capture_event_artifacts(
+                &second.id,
+                &RunEvent::plain(1, RunEventKind::Message, "codex", "SECOND"),
+            )
+            .expect("second message");
+
+        let sessions = store
+            .list_sessions(10, Some(ProviderKind::Codex))
+            .expect("list sessions");
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].provider_session_id, "thread-1");
+        assert_eq!(sessions[0].run_count, 2);
+        assert_eq!(sessions[0].latest_run_id, second.id);
+        assert_eq!(
+            sessions[0].latest_approval,
+            sah_domain::ApprovalMode::Confirm
+        );
+        assert_eq!(sessions[0].final_message_preview.as_deref(), Some("SECOND"));
+        assert_eq!(sessions[0].reference(), "codex:thread-1");
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn lists_runs_for_session_in_descending_order() {
+        let root = unique_test_dir("lists-runs-for-session-in-descending-order");
+        let store = Store::open(root.clone()).expect("store");
+
+        let mut older = store
+            .create_run(RunRequest {
+                provider: ProviderKind::Codex,
+                cwd: root.clone(),
+                approval: sah_domain::ApprovalMode::Auto,
+                prompt: "older".to_owned(),
+            })
+            .expect("older run");
+        older.provider_session_id = Some("thread-1".to_owned());
+        older.started_at_ms = 100;
+        store.save_run(&older).expect("save older");
+
+        let mut newer = store
+            .create_run(RunRequest {
+                provider: ProviderKind::Codex,
+                cwd: root.clone(),
+                approval: sah_domain::ApprovalMode::Auto,
+                prompt: "newer".to_owned(),
+            })
+            .expect("newer run");
+        newer.provider_session_id = Some("thread-1".to_owned());
+        newer.started_at_ms = 200;
+        store.save_run(&newer).expect("save newer");
+
+        let mut unrelated = store
+            .create_run(RunRequest {
+                provider: ProviderKind::Codex,
+                cwd: root.clone(),
+                approval: sah_domain::ApprovalMode::Auto,
+                prompt: "other".to_owned(),
+            })
+            .expect("other run");
+        unrelated.provider_session_id = Some("thread-2".to_owned());
+        unrelated.started_at_ms = 300;
+        store.save_run(&unrelated).expect("save other");
+
+        let runs = store
+            .list_runs_for_session(ProviderKind::Codex, "thread-1")
+            .expect("session runs");
+        assert_eq!(runs.len(), 2);
+        assert_eq!(runs[0].id, newer.id);
+        assert_eq!(runs[1].id, older.id);
 
         let _ = fs::remove_dir_all(root);
     }

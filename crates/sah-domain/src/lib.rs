@@ -283,6 +283,28 @@ impl RunRecord {
     }
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SessionRecord {
+    pub provider: ProviderKind,
+    pub provider_session_id: String,
+    pub latest_run_id: String,
+    pub latest_status: RunStatus,
+    pub latest_approval: ApprovalMode,
+    pub cwd: PathBuf,
+    pub latest_prompt: String,
+    pub first_started_at_ms: u128,
+    pub last_activity_at_ms: u128,
+    pub run_count: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub final_message_preview: Option<String>,
+}
+
+impl SessionRecord {
+    pub fn reference(&self) -> String {
+        format!("{}:{}", self.provider, self.provider_session_id)
+    }
+}
+
 pub fn new_run_id() -> String {
     Uuid::now_v7().to_string()
 }

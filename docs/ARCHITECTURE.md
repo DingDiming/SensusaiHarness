@@ -82,6 +82,12 @@ CLI summaries are derived from persisted artifacts rather than a separate cache:
 - final message previews come from `artifacts/final-message.txt`
 - workspace changed-file and diff presence stats come from `artifacts/workspace/*.json`
 
+Session-oriented CLI commands aggregate runs by `provider + provider_session_id`:
+
+- `sessions list` shows resumable conversations without exposing only raw run ids
+- `sessions inspect` shows the ordered run history within one provider session
+- `continue` resumes the latest run in a session by session ref instead of by run id
+
 End-to-end regression coverage now lives under `crates/sah-runtime/tests/` and replays fixture provider stdout through the real runtime, store, and parser stack.
 
 ## Legacy Policy

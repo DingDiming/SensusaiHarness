@@ -6,7 +6,7 @@ use provider_claude::ClaudeProvider;
 use provider_codex::CodexProvider;
 use sah_domain::{
     ApprovalMode, CommandRecord, CommandStatus, ProviderKind, RunEvent, RunRequest, RunStatus,
-    WorkspaceSnapshot,
+    SessionRecord, WorkspaceSnapshot,
 };
 use sah_provider::{ProviderAdapter, ProviderProbe};
 use sah_runtime::{execute_run, load_transcript, resume_run};
@@ -46,6 +46,12 @@ struct RunListEntry {
     summary: RunSummary,
 }
 
+#[derive(Clone, Debug, Serialize)]
+struct SessionInspectView {
+    session: SessionRecord,
+    runs: Vec<sah_domain::RunRecord>,
+}
+
 #[derive(Parser)]
 #[command(name = "sah")]
 #[command(about = "Terminal-first local agent harness for Codex CLI and Claude CLI")]
@@ -68,6 +74,12 @@ enum Commands {
         run_id: String,
         #[arg(long, default_value_t = false)]
         force: bool,
+    },
+    Continue {
+        session: String,
+        #[arg(long)]
+        approval: Option<ApprovalMode>,
+        prompt: Option<String>,
     },
     Doctor {
         #[arg(long, default_value_t = false)]
@@ -96,6 +108,10 @@ enum Commands {
     Providers {
         #[command(subcommand)]
         command: ProviderCommands,
+    },
+    Sessions {
+        #[command(subcommand)]
+        command: SessionCommands,
     },
     Run {
         #[arg(long)]
@@ -146,6 +162,23 @@ enum ConfigCommands {
 #[derive(Subcommand)]
 enum ProviderCommands {
     List {
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum SessionCommands {
+    List {
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+        #[arg(long)]
+        provider: Option<ProviderKind>,
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
+    Inspect {
+        session: String,
         #[arg(long, default_value_t = false)]
         json: bool,
     },
@@ -203,6 +236,35 @@ fn main() -> Result<()> {
         Commands::Delete { run_id, force } => {
             store.delete_run(&run_id, force)?;
             println!("deleted: {}", run_id);
+        }
+        Commands::Continue {
+            session,
+            approval,
+            prompt,
+        } => {
+            let session = resolve_session(&store, &session)?;
+            let previous = store.load_run(&session.latest_run_id)?;
+            let adapter = resolve_provider(&providers, session.provider)
+                .with_context(|| format!("provider {} is not registered", session.provider))?;
+            ensure_provider_ready(adapter)?;
+            let prompt = prompt.unwrap_or_else(|| "Continue.".to_owned());
+            let approval = approval.unwrap_or(session.latest_approval);
+            confirm_if_required(
+                "continue",
+                session.provider,
+                &previous.request.cwd,
+                &prompt,
+                approval,
+            )?;
+
+            let record = resume_run(&store, adapter, &previous, prompt, approval, print_event)?;
+            println!();
+            println!("session: {}", session.reference());
+            println!("run_id: {}", record.id);
+            println!("status: {}", record.status);
+            if let Some(parent) = &record.resumed_from_run_id {
+                println!("resumed_from: {}", parent);
+            }
         }
         Commands::Doctor { json } => {
             let probes: Vec<ProviderProbe> =
@@ -391,6 +453,71 @@ fn main() -> Result<()> {
                 }
             }
         },
+        Commands::Sessions { command } => match command {
+            SessionCommands::List {
+                limit,
+                provider,
+                json,
+            } => {
+                let sessions = store.list_sessions(limit, provider)?;
+                if json {
+                    print_json(&sessions)?;
+                } else if sessions.is_empty() {
+                    println!("sessions: none");
+                } else {
+                    for session in sessions {
+                        println!(
+                            "{} latest_run={} status={} runs={} approval={} cwd={} prompt={} final={}",
+                            session.reference(),
+                            session.latest_run_id,
+                            session.latest_status,
+                            session.run_count,
+                            session.latest_approval,
+                            session.cwd.display(),
+                            truncate(&session.latest_prompt, 72),
+                            session
+                                .final_message_preview
+                                .as_deref()
+                                .map(|message| truncate(message, 48))
+                                .unwrap_or_else(|| "-".to_owned()),
+                        );
+                    }
+                }
+            }
+            SessionCommands::Inspect { session, json } => {
+                let session = resolve_session(&store, &session)?;
+                let runs =
+                    store.list_runs_for_session(session.provider, &session.provider_session_id)?;
+
+                if json {
+                    print_json(&SessionInspectView { session, runs })?;
+                } else {
+                    println!("session: {}", session.reference());
+                    println!("provider: {}", session.provider);
+                    println!("provider_session_id: {}", session.provider_session_id);
+                    println!("latest_run_id: {}", session.latest_run_id);
+                    println!("status: {}", session.latest_status);
+                    println!("approval: {}", session.latest_approval);
+                    println!("cwd: {}", session.cwd.display());
+                    println!("runs: {}", session.run_count);
+                    println!("prompt: {}", session.latest_prompt);
+                    if let Some(message) = &session.final_message_preview {
+                        println!("final: {}", message);
+                    }
+                    println!();
+                    println!("history:");
+                    for run in runs {
+                        println!(
+                            "- {} status={} approval={} prompt={}",
+                            run.id,
+                            run.status,
+                            run.request.approval,
+                            truncate(&run.request.prompt, 96),
+                        );
+                    }
+                }
+            }
+        },
         Commands::Run {
             provider,
             approval,
@@ -476,6 +603,43 @@ fn print_probe(probe: ProviderProbe) {
         "{} [{}] binary={} version={} detail={}",
         probe.kind, status, probe.binary, version, probe.detail
     );
+}
+
+fn resolve_session(store: &Store, value: &str) -> Result<SessionRecord> {
+    if let Some((provider, provider_session_id)) = parse_session_ref(value) {
+        let session = store
+            .list_sessions(usize::MAX, Some(provider))?
+            .into_iter()
+            .find(|session| session.provider_session_id == provider_session_id)
+            .ok_or_else(|| anyhow::anyhow!("session {} not found", value))?;
+        return Ok(session);
+    }
+
+    let matches: Vec<SessionRecord> = store
+        .list_sessions(usize::MAX, None)?
+        .into_iter()
+        .filter(|session| session.provider_session_id == value)
+        .collect();
+
+    match matches.len() {
+        1 => Ok(matches.into_iter().next().expect("single match")),
+        0 => bail!("session {} not found", value),
+        _ => bail!(
+            "session {} is ambiguous; use a provider-prefixed ref like codex:{}",
+            value,
+            value
+        ),
+    }
+}
+
+fn parse_session_ref(value: &str) -> Option<(ProviderKind, &str)> {
+    let (provider, provider_session_id) = value.split_once(':')?;
+    let provider = provider.parse().ok()?;
+    if provider_session_id.trim().is_empty() {
+        return None;
+    }
+
+    Some((provider, provider_session_id))
 }
 
 fn build_run_summary(
@@ -713,4 +877,60 @@ fn run_duration_ms(record: &sah_domain::RunRecord) -> Option<u128> {
     record
         .finished_at_ms
         .map(|finished_at_ms| finished_at_ms.saturating_sub(record.started_at_ms))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn parses_provider_prefixed_session_ref() {
+        let parsed = parse_session_ref("codex:thread-1").expect("session ref");
+
+        assert_eq!(parsed.0, ProviderKind::Codex);
+        assert_eq!(parsed.1, "thread-1");
+    }
+
+    #[test]
+    fn rejects_ambiguous_bare_session_ref() {
+        let root = unique_test_dir("rejects-ambiguous-bare-session-ref");
+        let store = Store::open(root.clone()).expect("store");
+
+        let mut codex = store
+            .create_run(RunRequest {
+                provider: ProviderKind::Codex,
+                cwd: root.clone(),
+                approval: ApprovalMode::Auto,
+                prompt: "codex".to_owned(),
+            })
+            .expect("codex run");
+        codex.provider_session_id = Some("shared".to_owned());
+        store.save_run(&codex).expect("save codex");
+
+        let mut claude = store
+            .create_run(RunRequest {
+                provider: ProviderKind::Claude,
+                cwd: root.clone(),
+                approval: ApprovalMode::Auto,
+                prompt: "claude".to_owned(),
+            })
+            .expect("claude run");
+        claude.provider_session_id = Some("shared".to_owned());
+        store.save_run(&claude).expect("save claude");
+
+        let error = resolve_session(&store, "shared").expect_err("ambiguous session");
+        assert!(error.to_string().contains("ambiguous"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    fn unique_test_dir(name: &str) -> PathBuf {
+        let ts = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time")
+            .as_nanos();
+        std::env::temp_dir().join(format!("sah-cli-{name}-{ts}"))
+    }
 }

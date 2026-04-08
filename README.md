@@ -37,6 +37,7 @@ Phase 1 commands in the new CLI:
 
 - `config show [--json]`
 - `config set [--provider codex|claude] [--approval auto|confirm] [--default-sah-home PATH]`
+- `continue <provider:session-id> [--approval auto|confirm] [prompt]`
 - `doctor`
 - `doctor --json`
 - `delete <run-id> [--force]`
@@ -46,6 +47,8 @@ Phase 1 commands in the new CLI:
 - `providers list`
 - `providers list --json`
 - `run --approval auto|confirm`
+- `sessions list [--limit N] [--provider codex|claude] [--json]`
+- `sessions inspect <provider:session-id> [--json]`
 - `watch <run-id> [--follow]`
 - `resume <run-id> [--approval auto|confirm] [prompt]`
 
@@ -77,6 +80,12 @@ Approval modes are now CLI-managed:
 - `confirm`: `sah` prompts once before launch or resume, then runs the provider in automatic mode if approved
 
 Confirmed runs also record a `system` event with `approval confirmed by sah` at the start of the transcript.
+
+Session-oriented browsing and continuation are available for runs that expose a provider session id:
+
+- `sessions list` shows resumable conversations grouped by provider session
+- `sessions inspect <provider:session-id>` shows the run history inside a session
+- `continue <provider:session-id>` resumes the latest run in that session without looking up a raw run id
 
 Each run now keeps:
 
