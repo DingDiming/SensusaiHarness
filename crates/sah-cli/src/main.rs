@@ -131,6 +131,9 @@ enum Commands {
         #[arg(long)]
         output: Option<PathBuf>,
     },
+    Import {
+        bundle: PathBuf,
+    },
     List {
         #[arg(long, default_value_t = 20)]
         limit: usize,
@@ -193,6 +196,11 @@ enum Commands {
         #[arg(long = "prompt-file")]
         prompt_file: Option<PathBuf>,
         prompt: Option<String>,
+    },
+    VerifyBundle {
+        bundle: PathBuf,
+        #[arg(long, default_value_t = false)]
+        json: bool,
     },
 }
 
@@ -488,6 +496,13 @@ fn main() -> Result<()> {
             });
             let exported = store.export_run_bundle(&run_id, &output)?;
             println!("exported: {}", exported.display());
+        }
+        Commands::Import { bundle } => {
+            let record = store.import_run_bundle(&bundle)?;
+            println!("imported: {}", bundle.display());
+            println!("run_id: {}", record.id);
+            println!("provider: {}", record.request.provider);
+            println!("status: {}", record.status);
         }
         Commands::List {
             limit,
@@ -834,6 +849,30 @@ fn main() -> Result<()> {
             println!("status: {}", record.status);
             if let Some(parent) = &record.resumed_from_run_id {
                 println!("resumed_from: {}", parent);
+            }
+        }
+        Commands::VerifyBundle { bundle, json } => {
+            let manifest = store.verify_run_bundle(&bundle)?;
+            if json {
+                print_json(&manifest)?;
+            } else {
+                println!("bundle: {}", bundle.display());
+                println!("run_id: {}", manifest.run.id);
+                println!("provider: {}", manifest.run.request.provider);
+                println!(
+                    "schema_versions: bundle={} transcript={} store_layout={}",
+                    manifest.schema_version,
+                    manifest.transcript_schema_version,
+                    manifest.store_layout_version,
+                );
+                println!(
+                    "counts: events={} commands={} workspace={}",
+                    manifest.event_count, manifest.command_count, manifest.workspace_snapshot_count
+                );
+                println!("files: {}", manifest.file_index.len());
+                if let Some(message) = manifest.final_message_preview {
+                    println!("final: {}", truncate(&message, 120));
+                }
             }
         }
     }

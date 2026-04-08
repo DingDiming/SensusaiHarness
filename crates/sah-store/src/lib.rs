@@ -293,6 +293,48 @@ impl Store {
         Ok(archived)
     }
 
+    pub fn verify_run_bundle(&self, root: &Path) -> Result<RunBundleManifest> {
+        verify_run_bundle(root)
+    }
+
+    pub fn import_run_bundle(&self, source: &Path) -> Result<RunRecord> {
+        let manifest = verify_run_bundle(source)?;
+        let destination = self.run_dir(&manifest.run.id);
+        if destination.exists() {
+            bail!(
+                "run {} already exists in store {}",
+                manifest.run.id,
+                self.root.display()
+            );
+        }
+
+        fs::create_dir_all(&destination).with_context(|| {
+            format!(
+                "failed to create import destination {}",
+                destination.display()
+            )
+        })?;
+
+        for relative_path in &manifest.file_index {
+            let source_path = source.join(relative_path);
+            let destination_path = destination.join(relative_path);
+            if let Some(parent) = destination_path.parent() {
+                fs::create_dir_all(parent).with_context(|| {
+                    format!("failed to create import parent {}", parent.display())
+                })?;
+            }
+            fs::copy(&source_path, &destination_path).with_context(|| {
+                format!(
+                    "failed to import {} to {}",
+                    source_path.display(),
+                    destination_path.display()
+                )
+            })?;
+        }
+
+        self.load_run(&manifest.run.id)
+    }
+
     pub fn delete_run(&self, run_id: &str, force: bool) -> Result<()> {
         let record = self.load_run(run_id)?;
         if record.status == RunStatus::Running && !force {
@@ -805,6 +847,62 @@ fn copy_dir_all(source: &Path, destination: &Path) -> Result<()> {
     Ok(())
 }
 
+fn read_bundle_manifest(root: &Path) -> Result<RunBundleManifest> {
+    let path = root.join("bundle.json");
+    let bytes = fs::read(&path)
+        .with_context(|| format!("failed to read bundle manifest {}", path.display()))?;
+    Ok(serde_json::from_slice(&bytes)?)
+}
+
+fn verify_run_bundle(root: &Path) -> Result<RunBundleManifest> {
+    let manifest = read_bundle_manifest(root)?;
+    if manifest.schema_version != RUN_BUNDLE_SCHEMA_VERSION {
+        bail!(
+            "unsupported bundle schema version: {}",
+            manifest.schema_version
+        );
+    }
+    if manifest.transcript_schema_version != TRANSCRIPT_SCHEMA_VERSION {
+        bail!(
+            "unsupported transcript schema version: {}",
+            manifest.transcript_schema_version
+        );
+    }
+    if manifest.store_layout_version != STORE_LAYOUT_VERSION {
+        bail!(
+            "unsupported store layout version: {}",
+            manifest.store_layout_version
+        );
+    }
+
+    let run_path = root.join(&manifest.run_path);
+    let run_bytes = fs::read(&run_path)
+        .with_context(|| format!("failed to read bundled run record {}", run_path.display()))?;
+    let run: RunRecord = serde_json::from_slice(&run_bytes)?;
+    if run.id != manifest.run.id {
+        bail!(
+            "bundle run id mismatch: manifest={} run.json={}",
+            manifest.run.id,
+            run.id
+        );
+    }
+
+    let mut actual_files = list_relative_files(root)?;
+    actual_files.retain(|path| path != "bundle.json");
+    if actual_files != manifest.file_index {
+        bail!("bundle file index does not match filesystem contents");
+    }
+
+    for relative_path in &manifest.file_index {
+        let path = root.join(relative_path);
+        if !path.is_file() {
+            bail!("bundle file missing: {}", relative_path);
+        }
+    }
+
+    Ok(manifest)
+}
+
 fn write_text_artifact(
     root: &Path,
     relative_path: &str,
@@ -1266,6 +1364,102 @@ mod tests {
 
         let _ = fs::remove_dir_all(root);
         let _ = fs::remove_dir_all(archive_root);
+    }
+
+    #[test]
+    fn imports_exported_run_bundle_into_store() {
+        let source_root = unique_test_dir("imports-exported-run-bundle-source");
+        let destination_root = unique_test_dir("imports-exported-run-bundle-destination");
+        let export_root = unique_test_dir("imports-exported-run-bundle-export");
+        let source_store = Store::open(source_root.clone()).expect("source store");
+        let destination_store = Store::open(destination_root.clone()).expect("destination store");
+
+        let mut record = source_store
+            .create_run(RunRequest {
+                provider: ProviderKind::Codex,
+                cwd: source_root.clone(),
+                approval: sah_domain::ApprovalMode::Auto,
+                prompt: "import".to_owned(),
+            })
+            .expect("run");
+        source_store
+            .append_event(
+                &record.id,
+                &RunEvent::plain(1, RunEventKind::Message, "codex", "hello import"),
+            )
+            .expect("append event");
+        source_store
+            .capture_event_artifacts(
+                &record.id,
+                &RunEvent::plain(1, RunEventKind::Message, "codex", "hello import"),
+            )
+            .expect("capture artifacts");
+        source_store
+            .finalize_run(&mut record, Some(0))
+            .expect("finalize run");
+
+        let bundle_path = export_root.join(&record.id);
+        source_store
+            .export_run_bundle(&record.id, &bundle_path)
+            .expect("export bundle");
+
+        let imported = destination_store
+            .import_run_bundle(&bundle_path)
+            .expect("import bundle");
+        assert_eq!(imported.id, record.id);
+        assert_eq!(imported.status, RunStatus::Completed);
+        assert_eq!(
+            destination_store
+                .read_final_message(&record.id)
+                .expect("final message")
+                .as_deref(),
+            Some("hello import")
+        );
+        assert_eq!(
+            destination_store
+                .read_events(&record.id)
+                .expect("events")
+                .len(),
+            1
+        );
+
+        let _ = fs::remove_dir_all(source_root);
+        let _ = fs::remove_dir_all(destination_root);
+        let _ = fs::remove_dir_all(export_root);
+    }
+
+    #[test]
+    fn verify_run_bundle_rejects_stale_file_index() {
+        let root = unique_test_dir("verify-run-bundle-rejects-stale-file-index");
+        let export_root = unique_test_dir("verify-run-bundle-export");
+        let store = Store::open(root.clone()).expect("store");
+
+        let record = store
+            .create_run(RunRequest {
+                provider: ProviderKind::Codex,
+                cwd: root.clone(),
+                approval: sah_domain::ApprovalMode::Auto,
+                prompt: "verify".to_owned(),
+            })
+            .expect("run");
+        let bundle_path = export_root.join(&record.id);
+        store
+            .export_run_bundle(&record.id, &bundle_path)
+            .expect("export bundle");
+
+        fs::write(bundle_path.join("unexpected.txt"), "noise").expect("write unexpected file");
+
+        let error = store
+            .verify_run_bundle(&bundle_path)
+            .expect_err("stale bundle should fail");
+        assert!(
+            error
+                .to_string()
+                .contains("bundle file index does not match filesystem contents")
+        );
+
+        let _ = fs::remove_dir_all(root);
+        let _ = fs::remove_dir_all(export_root);
     }
 
     #[test]

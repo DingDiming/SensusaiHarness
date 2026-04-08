@@ -6,7 +6,7 @@
 - [x] Add prompt input sources such as `--prompt-file` and stdin capture for repeatable scripted runs and chats
 - [x] Add provider launch config for binary overrides and per-provider default args or model selection
 - [x] Add shell completions and man pages for `sah`
-- [ ] Add bundle import or verify flows so exported runs can be reopened without manual store surgery
+- [x] Add bundle import or verify flows so exported runs can be reopened without manual store surgery
 
 ## Phase 6: Mainline Cleanup
 

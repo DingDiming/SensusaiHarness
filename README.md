@@ -60,6 +60,7 @@ Phase 1 commands in the new CLI:
 - `doctor --json`
 - `delete <run-id> [--force]`
 - `export <run-id> [--output PATH]`
+- `import <bundle-path>`
 - `list [--limit N] [--provider codex|claude] [--status running|completed|failed] [--json]`
 - `inspect <run-id> [--json]`
 - `man [--output-dir PATH]`
@@ -69,6 +70,7 @@ Phase 1 commands in the new CLI:
 - `run [--provider codex|claude] [--approval auto|confirm] [--cwd PATH] [--prompt-file PATH] [prompt]`
 - `sessions list [--limit N] [--provider codex|claude] [--json]`
 - `sessions inspect <provider:session-id> [--json]`
+- `verify-bundle <bundle-path> [--json]`
 - `watch <run-id> [--follow]`
 - `resume <run-id> [--approval auto|confirm] [--prompt-file PATH] [prompt]`
 
@@ -143,6 +145,11 @@ Retention controls now cover both local run history and archived bundles:
 - `prune --archive-root PATH` archives pruned runs before removing them from the local store
 
 Exported bundles now include a machine-readable `bundle.json` manifest at the bundle root. It captures the run record, summary counts, and a relative file index so bundles can be inspected or replayed consistently outside the original store.
+
+Bundle portability is now a full round-trip:
+
+- `verify-bundle <bundle-path>` validates schema versions, file index integrity, and bundled run metadata before restore
+- `import <bundle-path>` restores a previously exported run into the local store so `inspect`, `watch`, and other store-backed commands work again without manual copying
 
 Each run now keeps:
 

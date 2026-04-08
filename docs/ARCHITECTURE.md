@@ -109,6 +109,8 @@ Exported bundles carry a stable `bundle.json` manifest:
 - `schema_version` currently starts at `1`
 - the manifest embeds the exported `run.json` record plus event, command, and workspace counts
 - `file_index` lists bundle-relative files so downstream tooling can inspect the bundle without scanning the filesystem ad hoc
+- `verify-bundle` re-validates that manifest against the filesystem before a bundle is imported back into a store
+- `import` copies the indexed bundle files back under `runs/<run-id>/` so store-backed CLI commands can reopen the run locally
 
 End-to-end regression coverage now lives under `crates/sah-runtime/tests/` and replays fixture provider stdout through the real runtime, store, and parser stack.
 
