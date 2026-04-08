@@ -73,6 +73,30 @@ impl fmt::Display for RunStatus {
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+pub enum CommandStatus {
+    InProgress,
+    Completed,
+    Failed,
+}
+
+impl CommandStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::InProgress => "in_progress",
+            Self::Completed => "completed",
+            Self::Failed => "failed",
+        }
+    }
+}
+
+impl fmt::Display for CommandStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
 pub enum RunEventKind {
     System,
     Message,
@@ -103,6 +127,20 @@ impl fmt::Display for RunEventKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
     }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CommandRecord {
+    pub id: String,
+    pub run_id: String,
+    pub provider: ProviderKind,
+    pub command: String,
+    pub status: CommandStatus,
+    pub started_at_ms: Option<u128>,
+    pub finished_at_ms: Option<u128>,
+    pub exit_code: Option<i32>,
+    pub summary: Option<String>,
+    pub output_artifact: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

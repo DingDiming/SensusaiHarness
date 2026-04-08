@@ -19,6 +19,9 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     Doctor,
+    Inspect {
+        run_id: String,
+    },
     Providers {
         #[command(subcommand)]
         command: ProviderCommands,
@@ -56,6 +59,47 @@ fn main() -> Result<()> {
 
             for provider in &providers {
                 print_probe(provider.probe());
+            }
+        }
+        Commands::Inspect { run_id } => {
+            let record = store.load_run(&run_id)?;
+            let commands = store.list_command_records(&run_id)?;
+            let artifacts_dir = store.artifacts_dir_for_run(&run_id);
+
+            println!("run_id: {}", record.id);
+            println!("provider: {}", record.request.provider);
+            println!("status: {}", record.status);
+            println!("cwd: {}", record.request.cwd.display());
+            println!("prompt: {}", record.request.prompt);
+            if let Some(session_id) = &record.provider_session_id {
+                println!("provider_session_id: {}", session_id);
+            }
+            if let Some(parent) = &record.resumed_from_run_id {
+                println!("resumed_from: {}", parent);
+            }
+            println!("artifacts: {}", artifacts_dir.display());
+
+            if commands.is_empty() {
+                println!();
+                println!("commands: none");
+            } else {
+                println!();
+                println!("commands:");
+                for command in commands {
+                    println!(
+                        "- {} [{}] exit={} cmd={}",
+                        command.id,
+                        command.status,
+                        command
+                            .exit_code
+                            .map(|code| code.to_string())
+                            .unwrap_or_else(|| "-".to_owned()),
+                        command.command
+                    );
+                    if let Some(path) = command.output_artifact {
+                        println!("  output: {}", artifacts_dir.join(path).display());
+                    }
+                }
             }
         }
         Commands::Providers { command } => match command {

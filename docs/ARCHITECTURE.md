@@ -33,6 +33,9 @@ Each run is stored under a local run directory:
 
 - `run.json`: current run metadata
 - `events.jsonl`: append-only event transcript
+- `artifacts/final-message.txt`: latest assistant message
+- `artifacts/commands/*.json`: normalized command records
+- `artifacts/commands/*.stdout.txt`: captured command stdout when available
 
 Phase 1 normalizes provider output into a small internal event set:
 

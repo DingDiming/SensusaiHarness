@@ -103,6 +103,7 @@ where
         ),
     );
     store.append_event(&record.id, &launch_event)?;
+    store.capture_event_artifacts(&record.id, &launch_event)?;
     on_event(&launch_event);
     sequence += 1;
 
@@ -154,6 +155,7 @@ where
 
         if let Some(event) = event {
             store.append_event(&record.id, &event)?;
+            store.capture_event_artifacts(&record.id, &event)?;
             on_event(&event);
             sequence += 1;
         }
@@ -191,6 +193,7 @@ where
         ),
     );
     store.append_event(&record.id, &finish_event)?;
+    store.capture_event_artifacts(&record.id, &finish_event)?;
     on_event(&finish_event);
 
     Ok(record)
