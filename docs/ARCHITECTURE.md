@@ -34,6 +34,16 @@ Each run is stored under a local run directory:
 - `run.json`: current run metadata
 - `events.jsonl`: append-only event transcript
 
+Phase 1 normalizes provider output into a small internal event set:
+
+- `message`
+- `command_started`
+- `command_finished`
+- `usage`
+- `system`
+- `completed`
+- `failed`
+
 The initial store root is:
 
 - `SAH_HOME` when set

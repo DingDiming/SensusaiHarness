@@ -316,6 +316,7 @@ version = "0.1.0"
 dependencies = [
  "sah-domain",
  "sah-provider",
+ "serde_json",
 ]
 
 [[package]]
@@ -324,6 +325,7 @@ version = "0.1.0"
 dependencies = [
  "sah-domain",
  "sah-provider",
+ "serde_json",
 ]
 
 [[package]]

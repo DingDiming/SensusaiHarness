@@ -107,7 +107,7 @@ fn main() -> Result<()> {
 }
 
 fn providers() -> Vec<Box<dyn ProviderAdapter>> {
-    vec![Box::new(CodexProvider), Box::new(ClaudeProvider)]
+    vec![Box::new(CodexProvider::default()), Box::new(ClaudeProvider)]
 }
 
 fn resolve_provider(

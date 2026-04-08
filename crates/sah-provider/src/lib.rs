@@ -27,17 +27,22 @@ pub trait ProviderAdapter {
     fn probe(&self) -> ProviderProbe;
     fn build_command(&self, request: &RunRequest) -> CommandSpec;
 
-    fn parse_stdout_line(&self, line: &str, sequence: u64) -> RunEvent {
+    fn parse_stdout_line(&self, line: &str, sequence: u64) -> Option<RunEvent> {
         parse_event_line(self.kind(), line, sequence)
     }
 
-    fn parse_stderr_line(&self, line: &str, sequence: u64) -> RunEvent {
-        RunEvent::plain(
+    fn parse_stderr_line(&self, line: &str, sequence: u64) -> Option<RunEvent> {
+        let line = line.trim();
+        if line.is_empty() {
+            return None;
+        }
+
+        Some(RunEvent::plain(
             sequence,
             RunEventKind::Output,
             format!("{}.stderr", self.kind()),
             line.to_owned(),
-        )
+        ))
     }
 }
 
@@ -78,14 +83,30 @@ pub fn probe_binary(
     }
 }
 
-pub fn parse_event_line(kind: ProviderKind, line: &str, sequence: u64) -> RunEvent {
+pub fn parse_event_line(kind: ProviderKind, line: &str, sequence: u64) -> Option<RunEvent> {
+    let line = line.trim();
+    if line.is_empty() {
+        return None;
+    }
+
     match serde_json::from_str::<Value>(line) {
         Ok(raw) => {
             let event_kind = classify_json_event(&raw);
             let summary = summarize_json_event(&raw).unwrap_or_else(|| line.to_owned());
-            RunEvent::with_raw(sequence, event_kind, kind.as_str(), summary, raw)
+            Some(RunEvent::with_raw(
+                sequence,
+                event_kind,
+                kind.as_str(),
+                summary,
+                raw,
+            ))
         }
-        Err(_) => RunEvent::plain(sequence, RunEventKind::Output, kind.as_str(), line.to_owned()),
+        Err(_) => Some(RunEvent::plain(
+            sequence,
+            RunEventKind::Output,
+            kind.as_str(),
+            line.to_owned(),
+        )),
     }
 }
 

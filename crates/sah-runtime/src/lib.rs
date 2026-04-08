@@ -71,9 +71,11 @@ where
             StreamSource::Stderr => provider.parse_stderr_line(&stream_line.line, sequence),
         };
 
-        store.append_event(&record.id, &event)?;
-        on_event(&event);
-        sequence += 1;
+        if let Some(event) = event {
+            store.append_event(&record.id, &event)?;
+            on_event(&event);
+            sequence += 1;
+        }
     }
 
     let status = child
