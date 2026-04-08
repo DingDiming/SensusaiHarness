@@ -1,5 +1,8 @@
 use sah_domain::{ApprovalMode, ProviderKind, RunEvent, RunEventKind, RunRecord, RunRequest};
-use sah_provider::{CommandSpec, ProviderAdapter, ProviderProbe, parse_event_line, probe_binary};
+use sah_provider::{
+    CommandSpec, ProviderAdapter, ProviderProbe, parse_event_line, probe_binary,
+    summarize_file_change,
+};
 use serde_json::Value;
 use std::cell::Cell;
 
@@ -133,6 +136,13 @@ fn normalize_item_started(sequence: u64, raw: Value) -> Option<RunEvent> {
                 raw,
             ))
         }
+        _ if is_file_change_item_type(item_type) => Some(RunEvent::with_raw(
+            sequence,
+            RunEventKind::FileChange,
+            ProviderKind::Codex.as_str(),
+            summarize_file_change(&raw).unwrap_or_else(|| format!("file change ({item_type})")),
+            raw,
+        )),
         _ => None,
     }
 }
@@ -186,6 +196,13 @@ fn normalize_item_completed(sequence: u64, raw: Value) -> Option<RunEvent> {
                 raw,
             ))
         }
+        _ if is_file_change_item_type(item_type) => Some(RunEvent::with_raw(
+            sequence,
+            RunEventKind::FileChange,
+            ProviderKind::Codex.as_str(),
+            summarize_file_change(&raw).unwrap_or_else(|| format!("file change ({item_type})")),
+            raw,
+        )),
         _ => Some(RunEvent::with_raw(
             sequence,
             RunEventKind::Output,
@@ -194,6 +211,25 @@ fn normalize_item_completed(sequence: u64, raw: Value) -> Option<RunEvent> {
             raw,
         )),
     }
+}
+
+fn is_file_change_item_type(item_type: &str) -> bool {
+    matches!(
+        item_type.trim().to_ascii_lowercase().as_str(),
+        "file_change"
+            | "file_changed"
+            | "file_update"
+            | "file_write"
+            | "write_file"
+            | "write"
+            | "edit_file"
+            | "edit"
+            | "multiedit"
+            | "multi_edit"
+            | "apply_patch"
+            | "patch_apply"
+            | "str_replace_editor"
+    )
 }
 
 fn normalize_turn_completed(sequence: u64, raw: Value) -> RunEvent {
@@ -326,6 +362,21 @@ mod tests {
         assert_eq!(event.kind, RunEventKind::CommandFinished);
         assert!(event.summary.contains("/bin/zsh -lc pwd"));
         assert!(event.summary.contains("/tmp/demo"));
+    }
+
+    #[test]
+    fn normalizes_file_change_items() {
+        let raw = serde_json::json!({
+            "type": "item.completed",
+            "item": {
+                "type": "apply_patch",
+                "path": "src/main.rs"
+            }
+        });
+
+        let event = normalize_codex_stdout(3, raw).expect("event");
+        assert_eq!(event.kind, RunEventKind::FileChange);
+        assert_eq!(event.summary, "apply patch: src/main.rs");
     }
 
     #[test]

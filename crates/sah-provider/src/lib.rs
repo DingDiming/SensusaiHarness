@@ -117,6 +117,10 @@ pub fn parse_event_line(kind: ProviderKind, line: &str, sequence: u64) -> Option
 }
 
 fn classify_json_event(raw: &Value) -> RunEventKind {
+    if is_file_change_event(raw) {
+        return RunEventKind::FileChange;
+    }
+
     let tag = raw
         .get("type")
         .or_else(|| raw.get("event"))
@@ -137,6 +141,10 @@ fn classify_json_event(raw: &Value) -> RunEventKind {
 }
 
 fn summarize_json_event(raw: &Value) -> Option<String> {
+    if is_file_change_event(raw) {
+        return summarize_file_change(raw);
+    }
+
     let event_name = raw
         .get("type")
         .or_else(|| raw.get("event"))
@@ -176,5 +184,127 @@ fn flatten_value(value: &Value) -> Option<String> {
             None
         }
         _ => None,
+    }
+}
+
+pub fn summarize_file_change(raw: &Value) -> Option<String> {
+    let action = extract_file_change_action(raw).unwrap_or_else(|| "file change".to_owned());
+    if let Some(path) = find_string_field(
+        raw,
+        &["file_path", "target_file", "new_path", "old_path", "filename", "relative_path", "path"],
+    ) {
+        return Some(format!("{action}: {path}"));
+    }
+
+    Some(action)
+}
+
+fn is_file_change_event(raw: &Value) -> bool {
+    extract_event_labels(raw)
+        .into_iter()
+        .any(|label| is_file_change_label(&label))
+}
+
+fn extract_file_change_action(raw: &Value) -> Option<String> {
+    extract_event_labels(raw)
+        .into_iter()
+        .find(|label| is_file_change_label(label))
+        .map(|label| normalize_file_change_action(&label))
+}
+
+fn extract_event_labels(raw: &Value) -> Vec<String> {
+    let mut labels = Vec::new();
+    collect_string_field(raw, "type", &mut labels);
+    collect_string_field(raw, "event", &mut labels);
+    collect_string_field(raw, "subtype", &mut labels);
+    collect_string_field(raw, "name", &mut labels);
+    collect_string_field(raw, "tool_name", &mut labels);
+    labels
+}
+
+fn collect_string_field(value: &Value, key: &str, labels: &mut Vec<String>) {
+    match value {
+        Value::Object(map) => {
+            if let Some(text) = map.get(key).and_then(Value::as_str) {
+                labels.push(text.to_owned());
+            }
+            for value in map.values() {
+                collect_string_field(value, key, labels);
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                collect_string_field(item, key, labels);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn find_string_field(value: &Value, keys: &[&str]) -> Option<String> {
+    match value {
+        Value::Object(map) => {
+            for key in keys {
+                if let Some(text) = map.get(*key).and_then(Value::as_str) {
+                    return Some(text.to_owned());
+                }
+            }
+            for value in map.values() {
+                if let Some(found) = find_string_field(value, keys) {
+                    return Some(found);
+                }
+            }
+            None
+        }
+        Value::Array(items) => items.iter().find_map(|item| find_string_field(item, keys)),
+        _ => None,
+    }
+}
+
+fn is_file_change_label(label: &str) -> bool {
+    matches!(
+        label.trim().to_ascii_lowercase().as_str(),
+        "file_change"
+            | "file_changed"
+            | "file_update"
+            | "file_write"
+            | "write_file"
+            | "write"
+            | "edit_file"
+            | "edit"
+            | "multiedit"
+            | "multi_edit"
+            | "apply_patch"
+            | "patch_apply"
+            | "str_replace_editor"
+    )
+}
+
+fn normalize_file_change_action(label: &str) -> String {
+    match label.trim().to_ascii_lowercase().as_str() {
+        "write" | "write_file" | "file_write" => "write file".to_owned(),
+        "edit" | "edit_file" | "str_replace_editor" => "edit file".to_owned(),
+        "multiedit" | "multi_edit" => "multi-edit file".to_owned(),
+        "apply_patch" | "patch_apply" => "apply patch".to_owned(),
+        "file_change" | "file_changed" | "file_update" => "file change".to_owned(),
+        other => other.replace('_', " "),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn classifies_file_change_tool_use() {
+        let event = parse_event_line(
+            ProviderKind::Claude,
+            r#"{"type":"tool_use","name":"Write","input":{"file_path":"src/main.rs"}}"#,
+            1,
+        )
+        .expect("event");
+
+        assert_eq!(event.kind, RunEventKind::FileChange);
+        assert_eq!(event.summary, "write file: src/main.rs");
     }
 }

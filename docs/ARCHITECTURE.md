@@ -43,6 +43,7 @@ Each run is stored under a local run directory:
 Phase 1 normalizes provider output into a small internal event set:
 
 - `message`
+- `file_change`
 - `command_started`
 - `command_finished`
 - `usage`

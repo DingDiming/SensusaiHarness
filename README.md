@@ -79,6 +79,17 @@ Each run now keeps:
 - command records and stdout artifacts
 - workspace snapshots before and after execution when `cwd` is inside a Git repository
 
+Normalized event kinds now include:
+
+- `message`
+- `file_change`
+- `command_started`
+- `command_finished`
+- `usage`
+- `system`
+- `completed`
+- `failed`
+
 `list` and `inspect` now surface lightweight summaries from those artifacts:
 
 - command counts

@@ -1,5 +1,8 @@
 use sah_domain::{ApprovalMode, ProviderKind, RunEvent, RunEventKind, RunRecord, RunRequest};
-use sah_provider::{CommandSpec, ProviderAdapter, ProviderProbe, parse_event_line, probe_binary};
+use sah_provider::{
+    CommandSpec, ProviderAdapter, ProviderProbe, parse_event_line, probe_binary,
+    summarize_file_change,
+};
 use serde_json::Value;
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -109,36 +112,55 @@ fn normalize_claude_stdout(sequence: u64, raw: Value) -> Option<RunEvent> {
 }
 
 fn normalize_assistant(sequence: u64, raw: Value) -> Option<RunEvent> {
-    let text = raw
+    let content = raw
         .get("message")
         .and_then(|message| message.get("content"))
-        .and_then(Value::as_array)
-        .and_then(|items| {
-            let parts: Vec<&str> = items
-                .iter()
-                .filter_map(|item| item.get("text").and_then(Value::as_str))
-                .map(str::trim)
-                .filter(|text| !text.is_empty())
-                .collect();
-            if parts.is_empty() {
-                None
-            } else {
-                Some(parts.join(" "))
-            }
-        })?;
+        .and_then(Value::as_array)?;
 
-    Some(RunEvent::with_raw(
-        sequence,
-        RunEventKind::Message,
-        ProviderKind::Claude.as_str(),
-        text,
-        raw,
-    ))
+    let text_parts: Vec<&str> = content
+        .iter()
+        .filter_map(|item| item.get("text").and_then(Value::as_str))
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .collect();
+
+    if !text_parts.is_empty() {
+        return Some(RunEvent::with_raw(
+            sequence,
+            RunEventKind::Message,
+            ProviderKind::Claude.as_str(),
+            text_parts.join(" "),
+            raw,
+        ));
+    }
+
+    if content.iter().any(is_file_change_tool_use) {
+        return Some(RunEvent::with_raw(
+            sequence,
+            RunEventKind::FileChange,
+            ProviderKind::Claude.as_str(),
+            summarize_file_change(&raw).unwrap_or_else(|| "file change".to_owned()),
+            raw,
+        ));
+    }
+
+    None
 }
 
 fn normalize_result(sequence: u64, raw: Value) -> Option<RunEvent> {
     if raw.get("is_error").and_then(Value::as_bool).unwrap_or(false) {
-        return None;
+        let summary = raw
+            .get("error")
+            .and_then(Value::as_str)
+            .filter(|text| !text.trim().is_empty())
+            .unwrap_or("provider error");
+        return Some(RunEvent::with_raw(
+            sequence,
+            RunEventKind::Failed,
+            ProviderKind::Claude.as_str(),
+            summary.to_owned(),
+            raw,
+        ));
     }
 
     let duration_ms = raw.get("duration_ms").and_then(Value::as_u64).unwrap_or(0);
@@ -163,6 +185,22 @@ fn normalize_result(sequence: u64, raw: Value) -> Option<RunEvent> {
         format!("tokens in={input} out={output} duration={}ms cost=${cost:.6}", duration_ms),
         raw,
     ))
+}
+
+fn is_file_change_tool_use(item: &Value) -> bool {
+    if item.get("type").and_then(Value::as_str) != Some("tool_use") {
+        return false;
+    }
+
+    matches!(
+        item.get("name")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .trim()
+            .to_ascii_lowercase()
+            .as_str(),
+        "write" | "edit" | "multiedit" | "str_replace_editor"
+    )
 }
 
 #[cfg(test)]
@@ -212,6 +250,41 @@ mod tests {
         let event = normalize_claude_stdout(3, raw).expect("event");
         assert_eq!(event.kind, RunEventKind::Usage);
         assert!(event.summary.contains("tokens in=10 out=4"));
+    }
+
+    #[test]
+    fn normalizes_file_change_tool_use() {
+        let raw = serde_json::json!({
+            "type": "assistant",
+            "message": {
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "name": "Write",
+                        "input": {
+                            "file_path": "src/main.rs"
+                        }
+                    }
+                ]
+            }
+        });
+
+        let event = normalize_claude_stdout(4, raw).expect("event");
+        assert_eq!(event.kind, RunEventKind::FileChange);
+        assert_eq!(event.summary, "write file: src/main.rs");
+    }
+
+    #[test]
+    fn normalizes_error_result_to_failed() {
+        let raw = serde_json::json!({
+            "type": "result",
+            "is_error": true,
+            "error": "request failed"
+        });
+
+        let event = normalize_claude_stdout(5, raw).expect("event");
+        assert_eq!(event.kind, RunEventKind::Failed);
+        assert_eq!(event.summary, "request failed");
     }
 
     #[test]
