@@ -445,43 +445,50 @@ fn print_watch_header(record: &sah_domain::RunRecord) {
 }
 
 fn watch_run(store: &Store, run_id: &str, follow: bool) -> Result<()> {
-    let (record, events) = load_transcript(store, run_id)?;
+    let (mut record, events) = load_transcript(store, run_id)?;
     print_watch_header(&record);
 
-    if !follow {
-        for event in events {
-            print_event(&event);
+    let mut next_sequence = 1_u64;
+    let mut seen_terminal_event = false;
+
+    for event in events {
+        next_sequence = event.sequence.saturating_add(1);
+        if is_terminal_event(&event) {
+            seen_terminal_event = true;
         }
+        print_event(&event);
+    }
+
+    if !follow {
         return Ok(());
     }
 
-    let mut next_sequence = 1_u64;
     loop {
-        let record = store.load_run(run_id)?;
-        let events = store.read_events(run_id)?;
-        let has_terminal_event = events.iter().any(|event| {
-            matches!(
-                event.kind,
-                sah_domain::RunEventKind::Completed | sah_domain::RunEventKind::Failed
-            )
-        });
-
-        for event in events {
-            if event.sequence < next_sequence {
-                continue;
-            }
-            next_sequence = event.sequence + 1;
-            print_event(&event);
-        }
-
-        if record.status != RunStatus::Running && has_terminal_event {
+        if record.status != RunStatus::Running && seen_terminal_event {
             break;
         }
 
         thread::sleep(Duration::from_millis(200));
+
+        for event in store.read_events_since(run_id, next_sequence)? {
+            next_sequence = event.sequence.saturating_add(1);
+            if is_terminal_event(&event) {
+                seen_terminal_event = true;
+            }
+            print_event(&event);
+        }
+
+        record = store.load_run(run_id)?;
     }
 
     Ok(())
+}
+
+fn is_terminal_event(event: &RunEvent) -> bool {
+    matches!(
+        event.kind,
+        sah_domain::RunEventKind::Completed | sah_domain::RunEventKind::Failed
+    )
 }
 
 fn print_json<T: Serialize>(value: &T) -> Result<()> {

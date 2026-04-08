@@ -171,13 +171,26 @@ impl Store {
             return Ok(Vec::new());
         }
 
-        let body = fs::read_to_string(&path)
+        let body = fs::read(&path)
             .with_context(|| format!("failed to read event stream {}", path.display()))?;
 
-        body.lines()
-            .filter(|line| !line.trim().is_empty())
-            .map(|line| serde_json::from_str(line).map_err(Into::into))
-            .collect()
+        parse_event_stream_bytes(&body, true)
+    }
+
+    pub fn read_events_since(&self, run_id: &str, next_sequence: u64) -> Result<Vec<RunEvent>> {
+        let path = self.events_file(run_id);
+        if !path.exists() {
+            return Ok(Vec::new());
+        }
+
+        let body = fs::read(&path)
+            .with_context(|| format!("failed to read event stream {}", path.display()))?;
+
+        let events = parse_event_stream_bytes(&body, false)?;
+        Ok(events
+            .into_iter()
+            .filter(|event| event.sequence >= next_sequence)
+            .collect())
     }
 
     pub fn list_command_records(&self, run_id: &str) -> Result<Vec<CommandRecord>> {
@@ -341,6 +354,32 @@ fn default_store_root() -> PathBuf {
     }
 
     PathBuf::from(".sah")
+}
+
+fn parse_event_stream_bytes(bytes: &[u8], strict: bool) -> Result<Vec<RunEvent>> {
+    let body = String::from_utf8_lossy(bytes);
+    let mut events = Vec::new();
+    let ends_with_newline = bytes.last() == Some(&b'\n');
+    let lines: Vec<&str> = body.split('\n').collect();
+
+    for (index, line) in lines.iter().enumerate() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+
+        match serde_json::from_str::<RunEvent>(line) {
+            Ok(event) => events.push(event),
+            Err(_error)
+                if !strict && index == lines.len().saturating_sub(1) && !ends_with_newline =>
+            {
+                break;
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
+
+    Ok(events)
 }
 
 fn message_artifact(event: &RunEvent) -> Option<String> {
@@ -764,6 +803,41 @@ mod tests {
 
         store.delete_run(&record.id, true).expect("force delete");
         assert!(!root.join("runs").join(&record.id).exists());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn reads_events_since_and_ignores_incomplete_last_line() {
+        let root = unique_test_dir("reads-events-since-and-ignores-incomplete-last-line");
+        let store = Store::open(root.clone()).expect("store");
+
+        let record = store
+            .create_run(RunRequest {
+                provider: ProviderKind::Codex,
+                cwd: root.clone(),
+                approval: sah_domain::ApprovalMode::Auto,
+                prompt: "events".to_owned(),
+            })
+            .expect("run");
+
+        store
+            .append_event(&record.id, &RunEvent::plain(1, RunEventKind::Message, "codex", "one"))
+            .expect("append first");
+        store
+            .append_event(&record.id, &RunEvent::plain(2, RunEventKind::Message, "codex", "two"))
+            .expect("append second");
+
+        let path = root.join("runs").join(&record.id).join("events.jsonl");
+        let mut file = OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .expect("open events file");
+        write!(file, "{{\"sequence\":3").expect("write incomplete line");
+
+        let events = store.read_events_since(&record.id, 2).expect("read since");
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].sequence, 2);
 
         let _ = fs::remove_dir_all(root);
     }

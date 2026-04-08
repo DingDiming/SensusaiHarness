@@ -72,6 +72,11 @@ The effective store root is:
 - otherwise the config file `sah_home` value
 - otherwise `~/.sah`
 
+Transcript inspection now has two modes:
+
+- `watch <run-id>` replays the stored transcript that already exists on disk
+- `watch <run-id> --follow` polls the append-only transcript and waits for the terminal event before exiting
+
 ## Legacy Policy
 
 `legacy/` remains available as a reference pool. New runtime features should be built in the Rust workspace rather than threaded back into the old Web stack.

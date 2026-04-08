@@ -46,7 +46,7 @@ Phase 1 commands in the new CLI:
 - `providers list`
 - `providers list --json`
 - `run --approval auto|confirm`
-- `watch [--follow]`
+- `watch <run-id> [--follow]`
 - `resume <run-id> [--approval auto|confirm] [prompt]`
 
 Persistent config lives at `~/.config/sah/config.json` by default. You can override the file with `--config PATH` or `SAH_CONFIG`.
