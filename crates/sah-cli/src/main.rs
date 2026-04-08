@@ -2,10 +2,10 @@ use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use provider_claude::ClaudeProvider;
 use provider_codex::CodexProvider;
-use sah_domain::{ApprovalMode, ProviderKind, RunEvent, RunRequest};
+use sah_domain::{ApprovalMode, ProviderKind, RunEvent, RunRequest, RunStatus};
 use sah_provider::{ProviderAdapter, ProviderProbe};
 use sah_runtime::{execute_run, load_transcript, resume_run};
-use sah_store::Store;
+use sah_store::{RunListFilters, Store};
 use serde::Serialize;
 use std::path::PathBuf;
 
@@ -31,6 +31,10 @@ enum Commands {
     List {
         #[arg(long, default_value_t = 20)]
         limit: usize,
+        #[arg(long)]
+        provider: Option<ProviderKind>,
+        #[arg(long)]
+        status: Option<RunStatus>,
         #[arg(long, default_value_t = false)]
         json: bool,
     },
@@ -108,20 +112,34 @@ fn main() -> Result<()> {
             let exported = store.export_run_bundle(&run_id, &output)?;
             println!("exported: {}", exported.display());
         }
-        Commands::List { limit, json } => {
-            let runs = store.list_runs(limit)?;
+        Commands::List {
+            limit,
+            provider,
+            status,
+            json,
+        } => {
+            let runs = store.list_runs_filtered(limit, RunListFilters { provider, status })?;
             if json {
                 print_json(&runs)?;
             } else if runs.is_empty() {
                 println!("runs: none");
             } else {
                 for record in runs {
+                    let duration_ms = run_duration_ms(&record)
+                        .map(|duration| duration.to_string())
+                        .unwrap_or_else(|| "-".to_owned());
+                    let exit_code = record
+                        .exit_code
+                        .map(|code| code.to_string())
+                        .unwrap_or_else(|| "-".to_owned());
                     println!(
-                        "{} provider={} status={} approval={} started_ms={} prompt={}",
+                        "{} provider={} status={} approval={} exit={} duration_ms={} started_ms={} prompt={}",
                         record.id,
                         record.request.provider,
                         record.status,
                         record.request.approval,
+                        exit_code,
+                        duration_ms,
                         record.started_at_ms,
                         truncate(&record.request.prompt, 72),
                     );
@@ -355,4 +373,10 @@ fn ensure_approval_guardrail(
     }
 
     Ok(())
+}
+
+fn run_duration_ms(record: &sah_domain::RunRecord) -> Option<u128> {
+    record
+        .finished_at_ms
+        .map(|finished_at_ms| finished_at_ms.saturating_sub(record.started_at_ms))
 }

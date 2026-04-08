@@ -13,6 +13,12 @@ pub struct Store {
     root: PathBuf,
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+pub struct RunListFilters {
+    pub provider: Option<ProviderKind>,
+    pub status: Option<RunStatus>,
+}
+
 impl Store {
     pub fn open_default() -> Result<Self> {
         let root = env::var_os("SAH_HOME")
@@ -87,6 +93,14 @@ impl Store {
     }
 
     pub fn list_runs(&self, limit: usize) -> Result<Vec<RunRecord>> {
+        self.list_runs_filtered(limit, RunListFilters::default())
+    }
+
+    pub fn list_runs_filtered(
+        &self,
+        limit: usize,
+        filters: RunListFilters,
+    ) -> Result<Vec<RunRecord>> {
         if limit == 0 {
             return Ok(Vec::new());
         }
@@ -104,6 +118,16 @@ impl Store {
             let bytes = fs::read(&path)
                 .with_context(|| format!("failed to read run record {}", path.display()))?;
             let record: RunRecord = serde_json::from_slice(&bytes)?;
+            if let Some(provider) = filters.provider {
+                if record.request.provider != provider {
+                    continue;
+                }
+            }
+            if let Some(status) = filters.status {
+                if record.status != status {
+                    continue;
+                }
+            }
             records.push(record);
         }
 
@@ -603,6 +627,51 @@ mod tests {
         let limited = store.list_runs(1).expect("list limited");
         assert_eq!(limited.len(), 1);
         assert_eq!(limited[0].id, second.id);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn filters_runs_by_provider_and_status() {
+        let root = unique_test_dir("filters-runs-by-provider-and-status");
+        let store = Store::open(root.clone()).expect("store");
+
+        let mut completed_codex = store
+            .create_run(RunRequest {
+                provider: ProviderKind::Codex,
+                cwd: root.clone(),
+                approval: sah_domain::ApprovalMode::Auto,
+                prompt: "completed codex".to_owned(),
+            })
+            .expect("completed codex");
+        store
+            .finalize_run(&mut completed_codex, Some(0))
+            .expect("finalize codex");
+
+        let mut failed_claude = store
+            .create_run(RunRequest {
+                provider: ProviderKind::Claude,
+                cwd: root.clone(),
+                approval: sah_domain::ApprovalMode::Auto,
+                prompt: "failed claude".to_owned(),
+            })
+            .expect("failed claude");
+        store
+            .finalize_run(&mut failed_claude, Some(1))
+            .expect("finalize claude");
+
+        let filtered = store
+            .list_runs_filtered(
+                10,
+                RunListFilters {
+                    provider: Some(ProviderKind::Codex),
+                    status: Some(RunStatus::Completed),
+                },
+            )
+            .expect("filter runs");
+
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].id, completed_codex.id);
 
         let _ = fs::remove_dir_all(root);
     }

@@ -372,6 +372,8 @@ dependencies = [
  "sah-provider",
  "sah-runtime",
  "sah-store",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -388,6 +390,7 @@ name = "sah-provider"
 version = "0.1.0"
 dependencies = [
  "sah-domain",
+ "serde",
  "serde_json",
 ]
 

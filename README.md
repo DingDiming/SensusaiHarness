@@ -38,7 +38,7 @@ Phase 1 commands in the new CLI:
 - `doctor`
 - `doctor --json`
 - `export <run-id> [--output PATH]`
-- `list [--limit N] [--json]`
+- `list [--limit N] [--provider codex|claude] [--status running|completed|failed] [--json]`
 - `inspect <run-id> [--json]`
 - `providers list`
 - `providers list --json`

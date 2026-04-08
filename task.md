@@ -5,5 +5,5 @@
 - [x] Add provider preflight checks before `run` and `resume`
 - [x] Add CLI-side guardrails for `confirm` approval mode
 - [x] Add machine-readable `--json` output for inventory commands
-- [ ] Add `list` filters and richer run summary fields
+- [x] Add `list` filters and richer run summary fields
 - [ ] Add `delete` command for removing local run history
