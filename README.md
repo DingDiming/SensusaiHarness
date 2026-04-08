@@ -1,64 +1,61 @@
 # SensusAI Harness
 
-SensusAI Harness is an experimental local agent harness for software delivery workflows.
+SensusAI Harness is a terminal-first local agent harness for Codex CLI and Claude CLI.
 
-The current repository contains three layers:
+This repository is being rebuilt around a Rust workspace. The active product path now lives under `crates/`, and the previous Web-first implementation is preserved under `legacy/` as reference material only.
 
-- `core/`: Rust HTTP/SSE core
-- `backend/`: Python harness runtime and orchestration
-- `frontend/`: Next.js monitoring UI
+## Workspace Layout
 
-The project is being cleaned up toward an open-source, terminal-first direction where Rust becomes the primary user-facing entrypoint and Codex CLI / Claude CLI are treated as provider adapters.
+- `crates/sah-cli`: terminal entrypoint
+- `crates/sah-domain`: shared run and event models
+- `crates/sah-store`: local filesystem run store
+- `crates/sah-provider`: provider trait and probe helpers
+- `crates/provider-codex`: Codex CLI adapter
+- `crates/provider-claude`: Claude CLI adapter
+- `crates/sah-runtime`: process execution and event persistence
+- `legacy/`: previous backend/frontend/web-core implementation for reference only
 
 ## Current Status
 
-- Active development repository, not a stable public release yet
-- Existing Web stack remains usable for local experimentation
-- Terminal-first open-source packaging is planned, but not complete
+- Active rebuild, not a stable public release yet
+- Terminal-first Rust path is the only active direction
+- Web-first code has been removed from the main runtime path
 
-## Local Development
-
-### Backend
+## Quick Start
 
 ```bash
-cd backend
-uv run pytest -q
-uv run uvicorn backend.src.main:app --host 0.0.0.0 --port 8000
+cargo run -p sah-cli -- doctor
+cargo run -p sah-cli -- providers list
+cargo run -p sah-cli -- run --provider codex --cwd . "Summarize this repository"
 ```
 
-Optional bootstrap admin credentials can be provided through environment variables:
+Runs are stored under `SAH_HOME` if set, otherwise under `~/.sah/`.
+
+## Development
+
+Phase 1 commands in the new CLI:
+
+- `doctor`
+- `providers list`
+- `run`
+- `watch`
+- `resume`
+
+Validation:
 
 ```bash
-export BOOTSTRAP_ADMIN_USERNAME=admin
-export BOOTSTRAP_ADMIN_PASSWORD='change-me'
-```
-
-### Rust Core
-
-```bash
-cd core
 cargo check
-cargo run
-```
-
-### Frontend
-
-```bash
-cd frontend
-npm install
-npm run build
-npm run dev
 ```
 
 ## Repository Notes
 
+- Use GitHub issues and pull requests as the default backlog and review system.
 - Generated artifacts, local databases, and dependency directories are intentionally ignored.
-- Runtime outputs belong under local `data/` or `output/` paths and should not be committed.
-- There is currently no GitHub remote configured for this clone, so backlog and issue tracking still need to be moved to GitHub before the open-source workflow is complete.
+- `legacy/` is not part of the new runtime path.
 
-## Near-Term Cleanup
+## Near-Term Scope
 
 - Stabilize provider abstraction for Codex CLI and Claude CLI
-- Add a Rust terminal entrypoint
-- Reduce Web-first assumptions in the repository layout and docs
-- Finish open-source hygiene: docs, license choice, release packaging
+- Harden the event protocol and transcript persistence
+- Add approval flows, diff views, and richer terminal UX
+- Decide which legacy assets should be ported into Rust and which should be dropped

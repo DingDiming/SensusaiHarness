@@ -1,0 +1,17 @@
+[package]
+name = "sah-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+provider-claude = { path = "../provider-claude" }
+provider-codex = { path = "../provider-codex" }
+sah-domain = { path = "../sah-domain" }
+sah-provider = { path = "../sah-provider" }
+sah-runtime = { path = "../sah-runtime" }
+sah-store = { path = "../sah-store" }
