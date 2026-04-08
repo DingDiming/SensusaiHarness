@@ -11,12 +11,85 @@ pub fn execute_run<F>(
     store: &Store,
     provider: &dyn ProviderAdapter,
     request: RunRequest,
+    on_event: F,
+) -> Result<RunRecord>
+where
+    F: FnMut(&RunEvent),
+{
+    let record = store.create_run(request)?;
+    let command_spec = provider.build_command(&record.request);
+    execute_command(store, provider, record, command_spec, "launching", on_event)
+}
+
+pub fn resume_run<F>(
+    store: &Store,
+    provider: &dyn ProviderAdapter,
+    previous: &RunRecord,
+    prompt: String,
+    on_event: F,
+) -> Result<RunRecord>
+where
+    F: FnMut(&RunEvent),
+{
+    let command_spec = provider
+        .build_resume_command(previous, &prompt)
+        .ok_or_else(|| anyhow!("run {} has no resumable provider session id", previous.id))?;
+
+    let mut record = store.create_run(RunRequest {
+        provider: previous.request.provider,
+        cwd: previous.request.cwd.clone(),
+        prompt,
+    })?;
+    record.provider_session_id = previous.provider_session_id.clone();
+    record.resumed_from_run_id = Some(previous.id.clone());
+    store.save_run(&record)?;
+
+    execute_command(store, provider, record, command_spec, "resuming", on_event)
+}
+
+pub fn load_transcript(store: &Store, run_id: &str) -> Result<(RunRecord, Vec<RunEvent>)> {
+    let record = store.load_run(run_id)?;
+    let events = store.read_events(run_id)?;
+    Ok((record, events))
+}
+
+#[derive(Clone, Copy)]
+enum StreamSource {
+    Stdout,
+    Stderr,
+}
+
+struct StreamLine {
+    source: StreamSource,
+    line: String,
+}
+
+fn stream_pipe<R>(reader: R, source: StreamSource, tx: Sender<StreamLine>) -> thread::JoinHandle<()>
+where
+    R: Read + Send + 'static,
+{
+    thread::spawn(move || {
+        let reader = BufReader::new(reader);
+        for line in reader.lines().map_while(Result::ok) {
+            let _ = tx.send(StreamLine {
+                source,
+                line,
+            });
+        }
+    })
+}
+
+fn execute_command<F>(
+    store: &Store,
+    provider: &dyn ProviderAdapter,
+    mut record: RunRecord,
+    command_spec: sah_provider::CommandSpec,
+    action: &str,
     mut on_event: F,
 ) -> Result<RunRecord>
 where
     F: FnMut(&RunEvent),
 {
-    let mut record = store.create_run(request)?;
     let mut sequence = 1_u64;
 
     let launch_event = RunEvent::plain(
@@ -24,7 +97,7 @@ where
         RunEventKind::System,
         "runtime",
         format!(
-            "launching {} in {}",
+            "{action} {} in {}",
             provider.kind(),
             record.request.cwd.display()
         ),
@@ -33,7 +106,6 @@ where
     on_event(&launch_event);
     sequence += 1;
 
-    let command_spec = provider.build_command(&record.request);
     let mut command = Command::new(&command_spec.program);
     command
         .args(&command_spec.args)
@@ -66,6 +138,15 @@ where
     drop(tx);
 
     for stream_line in rx {
+        if matches!(stream_line.source, StreamSource::Stdout)
+            && record.provider_session_id.is_none()
+        {
+            if let Some(session_id) = provider.extract_session_id(&stream_line.line) {
+                record.provider_session_id = Some(session_id);
+                store.save_run(&record)?;
+            }
+        }
+
         let event = match stream_line.source {
             StreamSource::Stdout => provider.parse_stdout_line(&stream_line.line, sequence),
             StreamSource::Stderr => provider.parse_stderr_line(&stream_line.line, sequence),
@@ -113,36 +194,4 @@ where
     on_event(&finish_event);
 
     Ok(record)
-}
-
-pub fn load_transcript(store: &Store, run_id: &str) -> Result<(RunRecord, Vec<RunEvent>)> {
-    let record = store.load_run(run_id)?;
-    let events = store.read_events(run_id)?;
-    Ok((record, events))
-}
-
-#[derive(Clone, Copy)]
-enum StreamSource {
-    Stdout,
-    Stderr,
-}
-
-struct StreamLine {
-    source: StreamSource,
-    line: String,
-}
-
-fn stream_pipe<R>(reader: R, source: StreamSource, tx: Sender<StreamLine>) -> thread::JoinHandle<()>
-where
-    R: Read + Send + 'static,
-{
-    thread::spawn(move || {
-        let reader = BufReader::new(reader);
-        for line in reader.lines().map_while(Result::ok) {
-            let _ = tx.send(StreamLine {
-                source,
-                line,
-            });
-        }
-    })
 }

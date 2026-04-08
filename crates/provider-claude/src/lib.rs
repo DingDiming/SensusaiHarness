@@ -1,4 +1,4 @@
-use sah_domain::{ProviderKind, RunEvent, RunEventKind, RunRequest};
+use sah_domain::{ProviderKind, RunEvent, RunEventKind, RunRecord, RunRequest};
 use sah_provider::{CommandSpec, ProviderAdapter, ProviderProbe, parse_event_line, probe_binary};
 use serde_json::Value;
 
@@ -28,7 +28,6 @@ impl ProviderAdapter for ClaudeProvider {
             args: vec![
                 "-p".to_owned(),
                 "--bare".to_owned(),
-                "--no-session-persistence".to_owned(),
                 "--output-format".to_owned(),
                 "stream-json".to_owned(),
                 "--verbose".to_owned(),
@@ -41,6 +40,37 @@ impl ProviderAdapter for ClaudeProvider {
             ],
             cwd: request.cwd.clone(),
         }
+    }
+
+    fn build_resume_command(&self, record: &RunRecord, prompt: &str) -> Option<CommandSpec> {
+        let session_id = record.provider_session_id.as_ref()?;
+
+        Some(CommandSpec {
+            program: self.binary_name().to_owned(),
+            args: vec![
+                "-p".to_owned(),
+                "--bare".to_owned(),
+                "--output-format".to_owned(),
+                "stream-json".to_owned(),
+                "--verbose".to_owned(),
+                "--permission-mode".to_owned(),
+                "auto".to_owned(),
+                "--add-dir".to_owned(),
+                record.request.cwd.display().to_string(),
+                "--resume".to_owned(),
+                session_id.clone(),
+                "--".to_owned(),
+                prompt.to_owned(),
+            ],
+            cwd: record.request.cwd.clone(),
+        })
+    }
+
+    fn extract_session_id(&self, line: &str) -> Option<String> {
+        let raw = serde_json::from_str::<Value>(line.trim()).ok()?;
+        raw.get("session_id")
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned)
     }
 
     fn parse_stdout_line(&self, line: &str, sequence: u64) -> Option<RunEvent> {
@@ -173,5 +203,13 @@ mod tests {
         let event = normalize_claude_stdout(3, raw).expect("event");
         assert_eq!(event.kind, RunEventKind::Usage);
         assert!(event.summary.contains("tokens in=10 out=4"));
+    }
+
+    #[test]
+    fn extracts_session_id_for_resume() {
+        let provider = ClaudeProvider;
+        let session_id = provider.extract_session_id(r#"{"type":"assistant","session_id":"session-1"}"#);
+
+        assert_eq!(session_id.as_deref(), Some("session-1"));
     }
 }

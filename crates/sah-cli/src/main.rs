@@ -4,7 +4,7 @@ use provider_claude::ClaudeProvider;
 use provider_codex::CodexProvider;
 use sah_domain::{ProviderKind, RunEvent, RunRequest};
 use sah_provider::{ProviderAdapter, ProviderProbe};
-use sah_runtime::{execute_run, load_transcript};
+use sah_runtime::{execute_run, load_transcript, resume_run};
 use sah_store::Store;
 use std::path::PathBuf;
 
@@ -35,6 +35,7 @@ enum Commands {
     },
     Resume {
         run_id: String,
+        prompt: Option<String>,
     },
 }
 
@@ -85,7 +86,7 @@ fn main() -> Result<()> {
             println!("run_id: {}", record.id);
             println!("status: {}", record.status);
         }
-        Commands::Watch { run_id } | Commands::Resume { run_id } => {
+        Commands::Watch { run_id } => {
             let (record, events) = load_transcript(&store, &run_id)?;
             println!(
                 "run_id: {} provider={} status={} cwd={}",
@@ -99,6 +100,20 @@ fn main() -> Result<()> {
 
             for event in events {
                 print_event(&event);
+            }
+        }
+        Commands::Resume { run_id, prompt } => {
+            let previous = store.load_run(&run_id)?;
+            let adapter = resolve_provider(&providers, previous.request.provider)
+                .with_context(|| format!("provider {} is not registered", previous.request.provider))?;
+            let prompt = prompt.unwrap_or_else(|| "Continue.".to_owned());
+
+            let record = resume_run(&store, adapter, &previous, prompt, print_event)?;
+            println!();
+            println!("run_id: {}", record.id);
+            println!("status: {}", record.status);
+            if let Some(parent) = &record.resumed_from_run_id {
+                println!("resumed_from: {}", parent);
             }
         }
     }

@@ -159,6 +159,8 @@ pub struct RunRecord {
     pub started_at_ms: u128,
     pub finished_at_ms: Option<u128>,
     pub exit_code: Option<i32>,
+    pub provider_session_id: Option<String>,
+    pub resumed_from_run_id: Option<String>,
 }
 
 impl RunRecord {
@@ -170,6 +172,8 @@ impl RunRecord {
             started_at_ms: now_timestamp_ms(),
             finished_at_ms: None,
             exit_code: None,
+            provider_session_id: None,
+            resumed_from_run_id: None,
         }
     }
 }

@@ -1,4 +1,4 @@
-use sah_domain::{ProviderKind, RunEvent, RunEventKind, RunRequest};
+use sah_domain::{ProviderKind, RunEvent, RunEventKind, RunRecord, RunRequest};
 use sah_provider::{CommandSpec, ProviderAdapter, ProviderProbe, parse_event_line, probe_binary};
 use serde_json::Value;
 use std::cell::Cell;
@@ -39,6 +39,36 @@ impl ProviderAdapter for CodexProvider {
             ],
             cwd: request.cwd.clone(),
         }
+    }
+
+    fn build_resume_command(&self, record: &RunRecord, prompt: &str) -> Option<CommandSpec> {
+        let session_id = record.provider_session_id.as_ref()?;
+
+        Some(CommandSpec {
+            program: self.binary_name().to_owned(),
+            args: vec![
+                "exec".to_owned(),
+                "resume".to_owned(),
+                "--json".to_owned(),
+                "--full-auto".to_owned(),
+                "--skip-git-repo-check".to_owned(),
+                session_id.clone(),
+                prompt.to_owned(),
+            ],
+            cwd: record.request.cwd.clone(),
+        })
+    }
+
+    fn extract_session_id(&self, line: &str) -> Option<String> {
+        let raw = serde_json::from_str::<Value>(line.trim()).ok()?;
+        if raw.get("type").and_then(Value::as_str) == Some("thread.started") {
+            return raw
+                .get("thread_id")
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned);
+        }
+
+        None
     }
 
     fn parse_stdout_line(&self, line: &str, sequence: u64) -> Option<RunEvent> {
@@ -317,5 +347,15 @@ mod tests {
         assert!(html.is_none());
         assert!(end.is_none());
         assert!(!provider.suppress_html_stderr.get());
+    }
+
+    #[test]
+    fn extracts_thread_id_for_resume() {
+        let provider = CodexProvider::default();
+        let session_id = provider.extract_session_id(
+            r#"{"type":"thread.started","thread_id":"abc-123"}"#,
+        );
+
+        assert_eq!(session_id.as_deref(), Some("abc-123"));
     }
 }

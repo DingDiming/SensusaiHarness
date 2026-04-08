@@ -1,4 +1,4 @@
-use sah_domain::{ProviderKind, RunEvent, RunEventKind, RunRequest};
+use sah_domain::{ProviderKind, RunEvent, RunEventKind, RunRecord, RunRequest};
 use serde_json::Value;
 use std::path::PathBuf;
 use std::process::Command;
@@ -26,6 +26,11 @@ pub trait ProviderAdapter {
     fn binary_name(&self) -> &'static str;
     fn probe(&self) -> ProviderProbe;
     fn build_command(&self, request: &RunRequest) -> CommandSpec;
+    fn build_resume_command(&self, record: &RunRecord, prompt: &str) -> Option<CommandSpec>;
+
+    fn extract_session_id(&self, _line: &str) -> Option<String> {
+        None
+    }
 
     fn parse_stdout_line(&self, line: &str, sequence: u64) -> Option<RunEvent> {
         parse_event_line(self.kind(), line, sequence)

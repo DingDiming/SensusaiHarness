@@ -39,7 +39,7 @@ Phase 1 commands in the new CLI:
 - `providers list`
 - `run`
 - `watch`
-- `resume`
+- `resume <run-id> [prompt]`
 
 Validation:
 
