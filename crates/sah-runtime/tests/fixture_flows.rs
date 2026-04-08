@@ -25,7 +25,7 @@ impl<A: ProviderAdapter> ProviderAdapter for FixtureProvider<A> {
         self.inner.display_name()
     }
 
-    fn binary_name(&self) -> &'static str {
+    fn binary_name(&self) -> &str {
         "/bin/sh"
     }
 
@@ -33,7 +33,7 @@ impl<A: ProviderAdapter> ProviderAdapter for FixtureProvider<A> {
         ProviderProbe {
             kind: self.kind(),
             display_name: self.display_name(),
-            binary: self.binary_name(),
+            binary: self.binary_name().to_owned(),
             available: true,
             detail: "fixture".to_owned(),
             version: None,
@@ -228,7 +228,7 @@ fn claude_fixture_run_exports_and_deletes_cleanly() {
     fs::create_dir_all(&workspace).expect("workspace");
 
     let provider = FixtureProvider {
-        inner: ClaudeProvider,
+        inner: ClaudeProvider::default(),
         run_fixture: fixture_path("claude_run.stdout.jsonl"),
         resume_fixture: None,
     };

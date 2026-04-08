@@ -195,6 +195,10 @@ enum ConfigCommands {
         #[arg(long, default_value_t = false)]
         json: bool,
     },
+    Provider {
+        #[command(subcommand)]
+        command: ProviderConfigCommands,
+    },
     Set {
         #[arg(long)]
         provider: Option<ProviderKind>,
@@ -208,6 +212,32 @@ enum ConfigCommands {
         clear_approval: bool,
         #[arg(long = "clear-default-sah-home", default_value_t = false)]
         clear_sah_home: bool,
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum ProviderConfigCommands {
+    Show {
+        provider: ProviderKind,
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
+    Set {
+        provider: ProviderKind,
+        #[arg(long)]
+        binary: Option<String>,
+        #[arg(long)]
+        model: Option<String>,
+        #[arg(long = "arg")]
+        extra_args: Vec<String>,
+        #[arg(long, default_value_t = false)]
+        clear_binary: bool,
+        #[arg(long, default_value_t = false)]
+        clear_model: bool,
+        #[arg(long, default_value_t = false)]
+        clear_args: bool,
         #[arg(long, default_value_t = false)]
         json: bool,
     },
@@ -255,7 +285,7 @@ fn main() -> Result<()> {
     let runtime_defaults =
         config::resolve_defaults(&config_path, &config_file, cli_sah_home.clone())?;
     let store = Store::open(runtime_defaults.sah_home.clone())?;
-    let providers = providers();
+    let providers = providers(&runtime_defaults);
 
     match cli.command {
         Commands::Chat {
@@ -284,6 +314,48 @@ fn main() -> Result<()> {
                     print_resolved_defaults(&runtime_defaults);
                 }
             }
+            ConfigCommands::Provider { command } => match command {
+                ProviderConfigCommands::Show { provider, json } => {
+                    let provider_config =
+                        config::resolved_provider_config(&runtime_defaults, provider);
+                    if json {
+                        print_json(provider_config)?;
+                    } else {
+                        print_provider_launch_config(provider, provider_config);
+                    }
+                }
+                ProviderConfigCommands::Set {
+                    provider,
+                    binary,
+                    model,
+                    extra_args,
+                    clear_binary,
+                    clear_model,
+                    clear_args,
+                    json,
+                } => {
+                    let updated = config::update_provider_config_file(
+                        config_file,
+                        provider,
+                        binary,
+                        model,
+                        extra_args,
+                        clear_binary,
+                        clear_model,
+                        clear_args,
+                    )?;
+                    config::save_config(&config_path, &updated)?;
+                    let resolved =
+                        config::resolve_defaults(&config_path, &updated, cli_sah_home.clone())?;
+                    let provider_config = config::resolved_provider_config(&resolved, provider);
+                    if json {
+                        print_json(provider_config)?;
+                    } else {
+                        println!("saved config: {}", config_path.display());
+                        print_provider_launch_config(provider, provider_config);
+                    }
+                }
+            },
             ConfigCommands::Set {
                 provider,
                 approval,
@@ -756,8 +828,11 @@ fn schema_versions() -> SchemaVersions {
     }
 }
 
-fn providers() -> Vec<Box<dyn ProviderAdapter>> {
-    vec![Box::new(CodexProvider::default()), Box::new(ClaudeProvider)]
+fn providers(runtime_defaults: &config::ResolvedDefaults) -> Vec<Box<dyn ProviderAdapter>> {
+    vec![
+        Box::new(CodexProvider::new(runtime_defaults.codex.clone())),
+        Box::new(ClaudeProvider::new(runtime_defaults.claude.clone())),
+    ]
 }
 
 fn resolve_provider(
@@ -1336,6 +1411,25 @@ fn print_resolved_defaults(defaults: &config::ResolvedDefaults) {
         defaults.default_approval_source,
         defaults.sah_home.display(),
         defaults.sah_home_source,
+    );
+    print_provider_launch_config(ProviderKind::Codex, &defaults.codex);
+    print_provider_launch_config(ProviderKind::Claude, &defaults.claude);
+}
+
+fn print_provider_launch_config(
+    provider: ProviderKind,
+    config: &sah_provider::ProviderLaunchConfig,
+) {
+    let binary = config.binary.as_deref().unwrap_or("-");
+    let model = config.model.as_deref().unwrap_or("-");
+    let args = if config.extra_args.is_empty() {
+        "-".to_owned()
+    } else {
+        config.extra_args.join(" ")
+    };
+    println!(
+        "provider_config: {} binary={} model={} args={}",
+        provider, binary, model, args
     );
 }
 

@@ -48,6 +48,8 @@ Tagged releases also publish prebuilt binaries through [`.github/workflows/relea
 Phase 1 commands in the new CLI:
 
 - `chat [--session PROVIDER:SESSION_ID] [--provider codex|claude] [--approval auto|confirm] [--cwd PATH] [--prompt-file PATH]`
+- `config provider show <provider> [--json]`
+- `config provider set <provider> [--binary PATH] [--model MODEL] [--arg ARG]... [--json]`
 - `config show [--json]`
 - `config set [--provider codex|claude] [--approval auto|confirm] [--default-sah-home PATH]`
 - `continue <provider:session-id> [--approval auto|confirm] [--prompt-file PATH] [prompt]`
@@ -82,6 +84,19 @@ Resolution order for runtime defaults is:
 ```text
 CLI flags > environment variables > config file > built-in defaults
 ```
+
+Per-provider launch config is persisted alongside the main defaults:
+
+- `config provider set codex --binary /path/to/codex-wrapper --model gpt-5 --arg=--profile --arg=test`
+- `config provider show codex --json`
+
+Provider launch config currently supports:
+
+- custom binary paths
+- a default `--model` value per provider
+- additional provider CLI args appended to launch commands
+
+For extra args that begin with `-`, prefer the `--arg=VALUE` form so clap does not parse them as `sah` flags.
 
 Supported environment variables:
 

@@ -1,12 +1,36 @@
 use sah_domain::{ApprovalMode, ProviderKind, RunEvent, RunEventKind, RunRecord, RunRequest};
 use sah_provider::{
-    CommandSpec, ProviderAdapter, ProviderProbe, parse_event_line, probe_binary,
-    summarize_file_change,
+    CommandSpec, ProviderAdapter, ProviderLaunchConfig, ProviderProbe, parse_event_line,
+    probe_binary, summarize_file_change,
 };
 use serde_json::Value;
 
-#[derive(Clone, Copy, Debug, Default)]
-pub struct ClaudeProvider;
+#[derive(Clone, Debug)]
+pub struct ClaudeProvider {
+    launch: ProviderLaunchConfig,
+}
+
+impl Default for ClaudeProvider {
+    fn default() -> Self {
+        Self {
+            launch: ProviderLaunchConfig::default(),
+        }
+    }
+}
+
+impl ClaudeProvider {
+    pub fn new(launch: ProviderLaunchConfig) -> Self {
+        Self { launch }
+    }
+
+    fn append_launch_options(&self, args: &mut Vec<String>) {
+        if let Some(model) = &self.launch.model {
+            args.push("--model".to_owned());
+            args.push(model.clone());
+        }
+        args.extend(self.launch.extra_args.iter().cloned());
+    }
+}
 
 impl ProviderAdapter for ClaudeProvider {
     fn kind(&self) -> ProviderKind {
@@ -17,8 +41,8 @@ impl ProviderAdapter for ClaudeProvider {
         "Anthropic Claude Code"
     }
 
-    fn binary_name(&self) -> &'static str {
-        "claude"
+    fn binary_name(&self) -> &str {
+        self.launch.binary.as_deref().unwrap_or("claude")
     }
 
     fn probe(&self) -> ProviderProbe {
@@ -31,21 +55,24 @@ impl ProviderAdapter for ClaudeProvider {
     }
 
     fn build_command(&self, request: &RunRequest) -> CommandSpec {
+        let mut args = vec![
+            "-p".to_owned(),
+            "--bare".to_owned(),
+            "--output-format".to_owned(),
+            "stream-json".to_owned(),
+            "--verbose".to_owned(),
+            "--permission-mode".to_owned(),
+            "auto".to_owned(),
+            "--add-dir".to_owned(),
+            request.cwd.display().to_string(),
+        ];
+        self.append_launch_options(&mut args);
+        args.push("--".to_owned());
+        args.push(request.prompt.clone());
+
         CommandSpec {
             program: self.binary_name().to_owned(),
-            args: vec![
-                "-p".to_owned(),
-                "--bare".to_owned(),
-                "--output-format".to_owned(),
-                "stream-json".to_owned(),
-                "--verbose".to_owned(),
-                "--permission-mode".to_owned(),
-                "auto".to_owned(),
-                "--add-dir".to_owned(),
-                request.cwd.display().to_string(),
-                "--".to_owned(),
-                request.prompt.clone(),
-            ],
+            args,
             cwd: request.cwd.clone(),
         }
     }
@@ -58,23 +85,26 @@ impl ProviderAdapter for ClaudeProvider {
     ) -> Option<CommandSpec> {
         let session_id = record.provider_session_id.as_ref()?;
 
+        let mut args = vec![
+            "-p".to_owned(),
+            "--bare".to_owned(),
+            "--output-format".to_owned(),
+            "stream-json".to_owned(),
+            "--verbose".to_owned(),
+            "--permission-mode".to_owned(),
+            "auto".to_owned(),
+            "--add-dir".to_owned(),
+            record.request.cwd.display().to_string(),
+            "--resume".to_owned(),
+            session_id.clone(),
+        ];
+        self.append_launch_options(&mut args);
+        args.push("--".to_owned());
+        args.push(prompt.to_owned());
+
         Some(CommandSpec {
             program: self.binary_name().to_owned(),
-            args: vec![
-                "-p".to_owned(),
-                "--bare".to_owned(),
-                "--output-format".to_owned(),
-                "stream-json".to_owned(),
-                "--verbose".to_owned(),
-                "--permission-mode".to_owned(),
-                "auto".to_owned(),
-                "--add-dir".to_owned(),
-                record.request.cwd.display().to_string(),
-                "--resume".to_owned(),
-                session_id.clone(),
-                "--".to_owned(),
-                prompt.to_owned(),
-            ],
+            args,
             cwd: record.request.cwd.clone(),
         })
     }
@@ -297,7 +327,7 @@ mod tests {
 
     #[test]
     fn extracts_session_id_for_resume() {
-        let provider = ClaudeProvider;
+        let provider = ClaudeProvider::default();
         let session_id =
             provider.extract_session_id(r#"{"type":"assistant","session_id":"session-1"}"#);
 
@@ -306,7 +336,7 @@ mod tests {
 
     #[test]
     fn maps_confirm_to_auto_permission_mode() {
-        let provider = ClaudeProvider;
+        let provider = ClaudeProvider::default();
         let command = provider.build_command(&RunRequest {
             provider: ProviderKind::Claude,
             cwd: "/tmp".into(),
@@ -324,7 +354,7 @@ mod tests {
 
     #[test]
     fn resume_command_uses_auto_permission_mode_for_confirm() {
-        let provider = ClaudeProvider;
+        let provider = ClaudeProvider::default();
         let record = RunRecord {
             id: "run-1".to_owned(),
             request: RunRequest {
@@ -351,5 +381,29 @@ mod tests {
                 .windows(2)
                 .any(|pair| pair == ["--permission-mode", "auto"])
         );
+    }
+
+    #[test]
+    fn launch_config_overrides_binary_and_adds_model_args() {
+        let provider = ClaudeProvider::new(ProviderLaunchConfig {
+            binary: Some("/tmp/claude-wrapper".to_owned()),
+            model: Some("sonnet".to_owned()),
+            extra_args: vec!["--debug".to_owned()],
+        });
+        let command = provider.build_command(&RunRequest {
+            provider: ProviderKind::Claude,
+            cwd: "/tmp".into(),
+            approval: ApprovalMode::Auto,
+            prompt: "hi".to_owned(),
+        });
+
+        assert_eq!(command.program, "/tmp/claude-wrapper");
+        assert!(
+            command
+                .args
+                .windows(2)
+                .any(|pair| pair == ["--model", "sonnet"])
+        );
+        assert!(command.args.iter().any(|arg| arg == "--debug"));
     }
 }

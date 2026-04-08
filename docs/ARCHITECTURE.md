@@ -68,6 +68,7 @@ Phase 1.5 adds persistent CLI defaults:
 
 - config file defaults live at `~/.config/sah/config.json` unless `SAH_CONFIG` overrides the path
 - supported persisted defaults are provider, approval mode, and store root
+- provider-specific launch config also lives there for binary overrides, default model selection, and extra provider args
 - runtime precedence is `CLI flags > environment variables > config file > built-in defaults`
 
 The effective store root is:

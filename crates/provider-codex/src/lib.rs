@@ -1,14 +1,41 @@
 use sah_domain::{ApprovalMode, ProviderKind, RunEvent, RunEventKind, RunRecord, RunRequest};
 use sah_provider::{
-    CommandSpec, ProviderAdapter, ProviderProbe, parse_event_line, probe_binary,
-    summarize_file_change,
+    CommandSpec, ProviderAdapter, ProviderLaunchConfig, ProviderProbe, parse_event_line,
+    probe_binary, summarize_file_change,
 };
 use serde_json::Value;
 use std::cell::Cell;
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct CodexProvider {
     suppress_html_stderr: Cell<bool>,
+    launch: ProviderLaunchConfig,
+}
+
+impl Default for CodexProvider {
+    fn default() -> Self {
+        Self {
+            suppress_html_stderr: Cell::new(false),
+            launch: ProviderLaunchConfig::default(),
+        }
+    }
+}
+
+impl CodexProvider {
+    pub fn new(launch: ProviderLaunchConfig) -> Self {
+        Self {
+            suppress_html_stderr: Cell::new(false),
+            launch,
+        }
+    }
+
+    fn append_launch_options(&self, args: &mut Vec<String>) {
+        if let Some(model) = &self.launch.model {
+            args.push("--model".to_owned());
+            args.push(model.clone());
+        }
+        args.extend(self.launch.extra_args.iter().cloned());
+    }
 }
 
 impl ProviderAdapter for CodexProvider {
@@ -20,8 +47,8 @@ impl ProviderAdapter for CodexProvider {
         "OpenAI Codex CLI"
     }
 
-    fn binary_name(&self) -> &'static str {
-        "codex"
+    fn binary_name(&self) -> &str {
+        self.launch.binary.as_deref().unwrap_or("codex")
     }
 
     fn probe(&self) -> ProviderProbe {
@@ -42,6 +69,7 @@ impl ProviderAdapter for CodexProvider {
             "--cd".to_owned(),
             request.cwd.display().to_string(),
         ];
+        self.append_launch_options(&mut args);
         args.push(request.prompt.clone());
 
         CommandSpec {
@@ -65,6 +93,7 @@ impl ProviderAdapter for CodexProvider {
             "--skip-git-repo-check".to_owned(),
             "--full-auto".to_owned(),
         ];
+        self.append_launch_options(&mut args);
         args.push(session_id.clone());
         args.push(prompt.to_owned());
 
@@ -472,5 +501,34 @@ mod tests {
             .expect("command");
 
         assert!(command.args.iter().any(|arg| arg == "--full-auto"));
+    }
+
+    #[test]
+    fn launch_config_overrides_binary_and_adds_model_args() {
+        let provider = CodexProvider::new(ProviderLaunchConfig {
+            binary: Some("/tmp/codex-wrapper".to_owned()),
+            model: Some("gpt-5".to_owned()),
+            extra_args: vec!["--profile".to_owned(), "test".to_owned()],
+        });
+        let command = provider.build_command(&RunRequest {
+            provider: ProviderKind::Codex,
+            cwd: "/tmp".into(),
+            approval: ApprovalMode::Auto,
+            prompt: "hi".to_owned(),
+        });
+
+        assert_eq!(command.program, "/tmp/codex-wrapper");
+        assert!(
+            command
+                .args
+                .windows(2)
+                .any(|pair| pair == ["--model", "gpt-5"])
+        );
+        assert!(
+            command
+                .args
+                .windows(2)
+                .any(|pair| pair == ["--profile", "test"])
+        );
     }
 }

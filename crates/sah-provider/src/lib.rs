@@ -1,5 +1,5 @@
 use sah_domain::{ProviderKind, RunEvent, RunEventKind, RunRecord, RunRequest};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::PathBuf;
 use std::process::Command;
@@ -15,16 +15,32 @@ pub struct CommandSpec {
 pub struct ProviderProbe {
     pub kind: ProviderKind,
     pub display_name: &'static str,
-    pub binary: &'static str,
+    pub binary: String,
     pub available: bool,
     pub detail: String,
     pub version: Option<String>,
 }
 
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProviderLaunchConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub binary: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub extra_args: Vec<String>,
+}
+
+impl ProviderLaunchConfig {
+    pub fn is_empty(&self) -> bool {
+        self.binary.is_none() && self.model.is_none() && self.extra_args.is_empty()
+    }
+}
+
 pub trait ProviderAdapter {
     fn kind(&self) -> ProviderKind;
     fn display_name(&self) -> &'static str;
-    fn binary_name(&self) -> &'static str;
+    fn binary_name(&self) -> &str;
     fn probe(&self) -> ProviderProbe;
     fn build_command(&self, request: &RunRequest) -> CommandSpec;
     fn build_resume_command(
@@ -60,7 +76,7 @@ pub trait ProviderAdapter {
 pub fn probe_binary(
     kind: ProviderKind,
     display_name: &'static str,
-    binary: &'static str,
+    binary: &str,
     version_args: &[&str],
 ) -> ProviderProbe {
     match Command::new(binary).args(version_args).output() {
@@ -69,7 +85,7 @@ pub fn probe_binary(
             ProviderProbe {
                 kind,
                 display_name,
-                binary,
+                binary: binary.to_owned(),
                 available: true,
                 detail: "available".to_owned(),
                 version: if version.is_empty() {
@@ -82,7 +98,7 @@ pub fn probe_binary(
         Ok(output) => ProviderProbe {
             kind,
             display_name,
-            binary,
+            binary: binary.to_owned(),
             available: false,
             detail: format!("binary returned non-zero status: {}", output.status),
             version: None,
@@ -90,7 +106,7 @@ pub fn probe_binary(
         Err(error) => ProviderProbe {
             kind,
             display_name,
-            binary,
+            binary: binary.to_owned(),
             available: false,
             detail: error.to_string(),
             version: None,

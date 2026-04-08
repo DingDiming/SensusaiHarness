@@ -1,5 +1,6 @@
 use anyhow::{Context, Result, bail};
 use sah_domain::{ApprovalMode, ProviderKind};
+use sah_provider::ProviderLaunchConfig;
 use serde::{Deserialize, Serialize};
 use std::env;
 use std::fs;
@@ -18,6 +19,10 @@ pub struct CliConfigFile {
     pub default_approval: Option<ApprovalMode>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sah_home: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "ProviderLaunchConfig::is_empty")]
+    pub codex: ProviderLaunchConfig,
+    #[serde(default, skip_serializing_if = "ProviderLaunchConfig::is_empty")]
+    pub claude: ProviderLaunchConfig,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -31,6 +36,8 @@ pub struct ResolvedDefaults {
     pub default_approval_source: String,
     pub sah_home: PathBuf,
     pub sah_home_source: String,
+    pub codex: ProviderLaunchConfig,
+    pub claude: ProviderLaunchConfig,
 }
 
 pub fn resolve_config_path(cli_override: Option<PathBuf>) -> PathBuf {
@@ -79,6 +86,8 @@ pub fn resolve_defaults(
         default_approval_source,
         sah_home,
         sah_home_source,
+        codex: file.codex.clone(),
+        claude: file.claude.clone(),
     })
 }
 
@@ -129,6 +138,68 @@ pub fn update_config_file(
     }
 
     Ok(file)
+}
+
+pub fn update_provider_config_file(
+    mut file: CliConfigFile,
+    provider: ProviderKind,
+    binary: Option<String>,
+    model: Option<String>,
+    extra_args: Vec<String>,
+    clear_binary: bool,
+    clear_model: bool,
+    clear_args: bool,
+) -> Result<CliConfigFile> {
+    if binary.is_some() && clear_binary {
+        bail!("cannot set and clear provider binary in the same command");
+    }
+    if model.is_some() && clear_model {
+        bail!("cannot set and clear provider model in the same command");
+    }
+    if !extra_args.is_empty() && clear_args {
+        bail!("cannot set and clear provider args in the same command");
+    }
+    if binary.is_none()
+        && model.is_none()
+        && extra_args.is_empty()
+        && !clear_binary
+        && !clear_model
+        && !clear_args
+    {
+        bail!("config provider set requires at least one change");
+    }
+
+    let config = file.provider_config_mut(provider);
+    if clear_binary {
+        config.binary = None;
+    } else if let Some(binary) = binary {
+        config.binary = Some(binary);
+    }
+
+    if clear_model {
+        config.model = None;
+    } else if let Some(model) = model {
+        config.model = Some(model);
+    }
+
+    if clear_args {
+        config.extra_args.clear();
+    }
+    if !extra_args.is_empty() {
+        config.extra_args = extra_args;
+    }
+
+    Ok(file)
+}
+
+pub fn resolved_provider_config(
+    defaults: &ResolvedDefaults,
+    provider: ProviderKind,
+) -> &ProviderLaunchConfig {
+    match provider {
+        ProviderKind::Codex => &defaults.codex,
+        ProviderKind::Claude => &defaults.claude,
+    }
 }
 
 fn resolve_provider_default(file: &CliConfigFile) -> Result<(ProviderKind, String)> {
@@ -221,6 +292,15 @@ fn normalize_store_home(path: PathBuf) -> Result<PathBuf> {
         .join(path))
 }
 
+impl CliConfigFile {
+    fn provider_config_mut(&mut self, provider: ProviderKind) -> &mut ProviderLaunchConfig {
+        match provider {
+            ProviderKind::Codex => &mut self.codex,
+            ProviderKind::Claude => &mut self.claude,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -232,6 +312,7 @@ mod tests {
             default_provider: Some(ProviderKind::Claude),
             default_approval: Some(ApprovalMode::Confirm),
             sah_home: Some(PathBuf::from("/tmp/sah-store")),
+            ..CliConfigFile::default()
         };
 
         let resolved = resolve_defaults(&path, &file, None).expect("resolve defaults");
@@ -258,11 +339,44 @@ mod tests {
     }
 
     #[test]
+    fn update_provider_config_file_sets_and_clears_fields() {
+        let file = CliConfigFile::default();
+        let file = update_provider_config_file(
+            file,
+            ProviderKind::Codex,
+            Some("/tmp/codex-wrapper".to_owned()),
+            Some("gpt-5".to_owned()),
+            vec!["--color".to_owned(), "never".to_owned()],
+            false,
+            false,
+            false,
+        )
+        .expect("set provider config");
+        assert_eq!(file.codex.binary.as_deref(), Some("/tmp/codex-wrapper"));
+        assert_eq!(file.codex.model.as_deref(), Some("gpt-5"));
+        assert_eq!(file.codex.extra_args, vec!["--color", "never"]);
+
+        let file = update_provider_config_file(
+            file,
+            ProviderKind::Codex,
+            None,
+            None,
+            Vec::new(),
+            true,
+            true,
+            true,
+        )
+        .expect("clear provider config");
+        assert!(file.codex.is_empty());
+    }
+
+    #[test]
     fn update_config_file_can_set_and_clear_values() {
         let file = CliConfigFile {
             default_provider: Some(ProviderKind::Codex),
             default_approval: Some(ApprovalMode::Auto),
             sah_home: Some(PathBuf::from("/tmp/original")),
+            ..CliConfigFile::default()
         };
 
         let file = update_config_file(
