@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use sah_domain::{
     CommandRecord, CommandStatus, ProviderKind, RunEvent, RunEventKind, RunRecord, RunRequest,
     RunStatus, WorkspaceSnapshot, now_timestamp_ms,
@@ -115,6 +115,19 @@ impl Store {
         });
         records.truncate(limit);
         Ok(records)
+    }
+
+    pub fn export_run_bundle(&self, run_id: &str, destination: &Path) -> Result<PathBuf> {
+        let source = self.run_dir(run_id);
+        if !source.exists() {
+            bail!("run {} does not exist", run_id);
+        }
+        if destination.exists() {
+            bail!("export destination already exists: {}", destination.display());
+        }
+
+        copy_dir_all(&source, destination)?;
+        Ok(destination.to_path_buf())
     }
 
     pub fn read_events(&self, run_id: &str) -> Result<Vec<RunEvent>> {
@@ -397,6 +410,34 @@ fn merge_command_record(existing: CommandRecord, incoming: CommandRecord) -> Com
     }
 }
 
+fn copy_dir_all(source: &Path, destination: &Path) -> Result<()> {
+    fs::create_dir_all(destination)
+        .with_context(|| format!("failed to create export directory {}", destination.display()))?;
+
+    for entry in fs::read_dir(source)
+        .with_context(|| format!("failed to read source directory {}", source.display()))?
+    {
+        let entry = entry?;
+        let source_path = entry.path();
+        let destination_path = destination.join(entry.file_name());
+        let file_type = entry.file_type()?;
+
+        if file_type.is_dir() {
+            copy_dir_all(&source_path, &destination_path)?;
+        } else if file_type.is_file() {
+            fs::copy(&source_path, &destination_path).with_context(|| {
+                format!(
+                    "failed to copy {} to {}",
+                    source_path.display(),
+                    destination_path.display()
+                )
+            })?;
+        }
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -564,6 +605,40 @@ mod tests {
         assert_eq!(limited[0].id, second.id);
 
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn exports_run_bundle_directory() {
+        let root = unique_test_dir("exports-run-bundle-directory");
+        let export_root = unique_test_dir("exports-run-bundle-destination");
+        let store = Store::open(root.clone()).expect("store");
+
+        let record = store
+            .create_run(RunRequest {
+                provider: ProviderKind::Codex,
+                cwd: root.clone(),
+                approval: sah_domain::ApprovalMode::Auto,
+                prompt: "export".to_owned(),
+            })
+            .expect("run");
+        let event = RunEvent::plain(1, RunEventKind::Message, "codex", "hello export");
+        store.append_event(&record.id, &event).expect("append event");
+        store
+            .capture_event_artifacts(&record.id, &event)
+            .expect("capture artifacts");
+
+        let destination = export_root.join("bundle");
+        let exported = store
+            .export_run_bundle(&record.id, &destination)
+            .expect("export bundle");
+
+        assert_eq!(exported, destination);
+        assert!(exported.join("run.json").exists());
+        assert!(exported.join("events.jsonl").exists());
+        assert!(exported.join("artifacts").join("final-message.txt").exists());
+
+        let _ = fs::remove_dir_all(root);
+        let _ = fs::remove_dir_all(export_root);
     }
 
     fn unique_test_dir(name: &str) -> PathBuf {

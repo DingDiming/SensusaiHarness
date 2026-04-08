@@ -19,6 +19,11 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     Doctor,
+    Export {
+        run_id: String,
+        #[arg(long)]
+        output: Option<PathBuf>,
+    },
     List {
         #[arg(long, default_value_t = 20)]
         limit: usize,
@@ -68,6 +73,17 @@ fn main() -> Result<()> {
             for provider in &providers {
                 print_probe(provider.probe());
             }
+        }
+        Commands::Export { run_id, output } => {
+            let output = output.unwrap_or_else(|| {
+                std::env::current_dir()
+                    .unwrap_or_else(|_| PathBuf::from("."))
+                    .join("output")
+                    .join("exports")
+                    .join(&run_id)
+            });
+            let exported = store.export_run_bundle(&run_id, &output)?;
+            println!("exported: {}", exported.display());
         }
         Commands::List { limit } => {
             let runs = store.list_runs(limit)?;
