@@ -50,6 +50,11 @@ Phase 1 normalizes provider output into a small internal event set:
 - `completed`
 - `failed`
 
+Phase 1 also exposes a provider-independent approval policy:
+
+- `auto`: let the provider execute commands automatically
+- `confirm`: keep provider-side approval behavior enabled
+
 The initial store root is:
 
 - `SAH_HOME` when set

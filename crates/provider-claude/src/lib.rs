@@ -1,4 +1,4 @@
-use sah_domain::{ProviderKind, RunEvent, RunEventKind, RunRecord, RunRequest};
+use sah_domain::{ApprovalMode, ProviderKind, RunEvent, RunEventKind, RunRecord, RunRequest};
 use sah_provider::{CommandSpec, ProviderAdapter, ProviderProbe, parse_event_line, probe_binary};
 use serde_json::Value;
 
@@ -23,6 +23,11 @@ impl ProviderAdapter for ClaudeProvider {
     }
 
     fn build_command(&self, request: &RunRequest) -> CommandSpec {
+        let permission_mode = match request.approval {
+            ApprovalMode::Auto => "auto",
+            ApprovalMode::Confirm => "default",
+        };
+
         CommandSpec {
             program: self.binary_name().to_owned(),
             args: vec![
@@ -32,7 +37,7 @@ impl ProviderAdapter for ClaudeProvider {
                 "stream-json".to_owned(),
                 "--verbose".to_owned(),
                 "--permission-mode".to_owned(),
-                "auto".to_owned(),
+                permission_mode.to_owned(),
                 "--add-dir".to_owned(),
                 request.cwd.display().to_string(),
                 "--".to_owned(),
@@ -44,6 +49,10 @@ impl ProviderAdapter for ClaudeProvider {
 
     fn build_resume_command(&self, record: &RunRecord, prompt: &str) -> Option<CommandSpec> {
         let session_id = record.provider_session_id.as_ref()?;
+        let permission_mode = match record.request.approval {
+            ApprovalMode::Auto => "auto",
+            ApprovalMode::Confirm => "default",
+        };
 
         Some(CommandSpec {
             program: self.binary_name().to_owned(),
@@ -54,7 +63,7 @@ impl ProviderAdapter for ClaudeProvider {
                 "stream-json".to_owned(),
                 "--verbose".to_owned(),
                 "--permission-mode".to_owned(),
-                "auto".to_owned(),
+                permission_mode.to_owned(),
                 "--add-dir".to_owned(),
                 record.request.cwd.display().to_string(),
                 "--resume".to_owned(),
@@ -211,5 +220,18 @@ mod tests {
         let session_id = provider.extract_session_id(r#"{"type":"assistant","session_id":"session-1"}"#);
 
         assert_eq!(session_id.as_deref(), Some("session-1"));
+    }
+
+    #[test]
+    fn maps_confirm_to_default_permission_mode() {
+        let provider = ClaudeProvider;
+        let command = provider.build_command(&RunRequest {
+            provider: ProviderKind::Claude,
+            cwd: "/tmp".into(),
+            approval: ApprovalMode::Confirm,
+            prompt: "hi".to_owned(),
+        });
+
+        assert!(command.args.windows(2).any(|pair| pair == ["--permission-mode", "default"]));
     }
 }

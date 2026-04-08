@@ -26,7 +26,7 @@ This repository is being rebuilt around a Rust workspace. The active product pat
 ```bash
 cargo run -p sah-cli -- doctor
 cargo run -p sah-cli -- providers list
-cargo run -p sah-cli -- run --provider codex --cwd . "Summarize this repository"
+cargo run -p sah-cli -- run --provider codex --approval auto --cwd . "Summarize this repository"
 ```
 
 Runs are stored under `SAH_HOME` if set, otherwise under `~/.sah/`.
@@ -38,9 +38,9 @@ Phase 1 commands in the new CLI:
 - `doctor`
 - `inspect <run-id>`
 - `providers list`
-- `run`
+- `run --approval auto|confirm`
 - `watch`
-- `resume <run-id> [prompt]`
+- `resume <run-id> [--approval auto|confirm] [prompt]`
 
 Each run now keeps:
 

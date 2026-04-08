@@ -44,7 +44,42 @@ impl FromStr for ProviderKind {
 pub struct RunRequest {
     pub provider: ProviderKind,
     pub cwd: PathBuf,
+    pub approval: ApprovalMode,
     pub prompt: String,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ApprovalMode {
+    Auto,
+    Confirm,
+}
+
+impl ApprovalMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Confirm => "confirm",
+        }
+    }
+}
+
+impl fmt::Display for ApprovalMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for ApprovalMode {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "auto" => Ok(Self::Auto),
+            "confirm" => Ok(Self::Confirm),
+            other => Err(format!("unsupported approval mode: {other}")),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]

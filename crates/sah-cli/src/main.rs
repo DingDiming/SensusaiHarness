@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use provider_claude::ClaudeProvider;
 use provider_codex::CodexProvider;
-use sah_domain::{ProviderKind, RunEvent, RunRequest};
+use sah_domain::{ApprovalMode, ProviderKind, RunEvent, RunRequest};
 use sah_provider::{ProviderAdapter, ProviderProbe};
 use sah_runtime::{execute_run, load_transcript, resume_run};
 use sah_store::Store;
@@ -29,6 +29,8 @@ enum Commands {
     Run {
         #[arg(long)]
         provider: ProviderKind,
+        #[arg(long, default_value = "auto")]
+        approval: ApprovalMode,
         #[arg(long, default_value = ".")]
         cwd: PathBuf,
         prompt: String,
@@ -38,6 +40,8 @@ enum Commands {
     },
     Resume {
         run_id: String,
+        #[arg(long)]
+        approval: Option<ApprovalMode>,
         prompt: Option<String>,
     },
 }
@@ -71,6 +75,7 @@ fn main() -> Result<()> {
             println!("provider: {}", record.request.provider);
             println!("status: {}", record.status);
             println!("cwd: {}", record.request.cwd.display());
+            println!("approval: {}", record.request.approval);
             println!("prompt: {}", record.request.prompt);
             if let Some(session_id) = &record.provider_session_id {
                 println!("provider_session_id: {}", session_id);
@@ -134,6 +139,7 @@ fn main() -> Result<()> {
         },
         Commands::Run {
             provider,
+            approval,
             cwd,
             prompt,
         } => {
@@ -145,6 +151,7 @@ fn main() -> Result<()> {
             let request = RunRequest {
                 provider,
                 cwd,
+                approval,
                 prompt,
             };
 
@@ -162,6 +169,7 @@ fn main() -> Result<()> {
                 record.status,
                 record.request.cwd.display()
             );
+            println!("approval: {}", record.request.approval);
             println!("prompt: {}", record.request.prompt);
             println!();
 
@@ -169,13 +177,18 @@ fn main() -> Result<()> {
                 print_event(&event);
             }
         }
-        Commands::Resume { run_id, prompt } => {
+        Commands::Resume {
+            run_id,
+            approval,
+            prompt,
+        } => {
             let previous = store.load_run(&run_id)?;
             let adapter = resolve_provider(&providers, previous.request.provider)
                 .with_context(|| format!("provider {} is not registered", previous.request.provider))?;
             let prompt = prompt.unwrap_or_else(|| "Continue.".to_owned());
+            let approval = approval.unwrap_or(previous.request.approval);
 
-            let record = resume_run(&store, adapter, &previous, prompt, print_event)?;
+            let record = resume_run(&store, adapter, &previous, prompt, approval, print_event)?;
             println!();
             println!("run_id: {}", record.id);
             println!("status: {}", record.status);

@@ -1,5 +1,8 @@
 use anyhow::{Context, Result, anyhow};
-use sah_domain::{RunEvent, RunEventKind, RunRecord, RunRequest, WorkspaceSnapshot, now_timestamp_ms};
+use sah_domain::{
+    ApprovalMode, RunEvent, RunEventKind, RunRecord, RunRequest, WorkspaceSnapshot,
+    now_timestamp_ms,
+};
 use sah_provider::ProviderAdapter;
 use sah_store::Store;
 use std::io::{BufRead, BufReader, Read};
@@ -27,6 +30,7 @@ pub fn resume_run<F>(
     provider: &dyn ProviderAdapter,
     previous: &RunRecord,
     prompt: String,
+    approval: ApprovalMode,
     on_event: F,
 ) -> Result<RunRecord>
 where
@@ -39,6 +43,7 @@ where
     let mut record = store.create_run(RunRequest {
         provider: previous.request.provider,
         cwd: previous.request.cwd.clone(),
+        approval,
         prompt,
     })?;
     record.provider_session_id = previous.provider_session_id.clone();

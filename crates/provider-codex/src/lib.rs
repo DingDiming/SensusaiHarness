@@ -1,4 +1,4 @@
-use sah_domain::{ProviderKind, RunEvent, RunEventKind, RunRecord, RunRequest};
+use sah_domain::{ApprovalMode, ProviderKind, RunEvent, RunEventKind, RunRecord, RunRequest};
 use sah_provider::{CommandSpec, ProviderAdapter, ProviderProbe, parse_event_line, probe_binary};
 use serde_json::Value;
 use std::cell::Cell;
@@ -26,35 +26,42 @@ impl ProviderAdapter for CodexProvider {
     }
 
     fn build_command(&self, request: &RunRequest) -> CommandSpec {
+        let mut args = vec![
+            "exec".to_owned(),
+            "--json".to_owned(),
+            "--skip-git-repo-check".to_owned(),
+            "--cd".to_owned(),
+            request.cwd.display().to_string(),
+        ];
+        if request.approval == ApprovalMode::Auto {
+            args.push("--full-auto".to_owned());
+        }
+        args.push(request.prompt.clone());
+
         CommandSpec {
             program: self.binary_name().to_owned(),
-            args: vec![
-                "exec".to_owned(),
-                "--json".to_owned(),
-                "--full-auto".to_owned(),
-                "--skip-git-repo-check".to_owned(),
-                "--cd".to_owned(),
-                request.cwd.display().to_string(),
-                request.prompt.clone(),
-            ],
+            args,
             cwd: request.cwd.clone(),
         }
     }
 
     fn build_resume_command(&self, record: &RunRecord, prompt: &str) -> Option<CommandSpec> {
         let session_id = record.provider_session_id.as_ref()?;
+        let mut args = vec![
+            "exec".to_owned(),
+            "resume".to_owned(),
+            "--json".to_owned(),
+            "--skip-git-repo-check".to_owned(),
+        ];
+        if record.request.approval == ApprovalMode::Auto {
+            args.push("--full-auto".to_owned());
+        }
+        args.push(session_id.clone());
+        args.push(prompt.to_owned());
 
         Some(CommandSpec {
             program: self.binary_name().to_owned(),
-            args: vec![
-                "exec".to_owned(),
-                "resume".to_owned(),
-                "--json".to_owned(),
-                "--full-auto".to_owned(),
-                "--skip-git-repo-check".to_owned(),
-                session_id.clone(),
-                prompt.to_owned(),
-            ],
+            args,
             cwd: record.request.cwd.clone(),
         })
     }
@@ -357,5 +364,25 @@ mod tests {
         );
 
         assert_eq!(session_id.as_deref(), Some("abc-123"));
+    }
+
+    #[test]
+    fn uses_full_auto_only_in_auto_mode() {
+        let provider = CodexProvider::default();
+        let auto = provider.build_command(&RunRequest {
+            provider: ProviderKind::Codex,
+            cwd: "/tmp".into(),
+            approval: ApprovalMode::Auto,
+            prompt: "hi".to_owned(),
+        });
+        let confirm = provider.build_command(&RunRequest {
+            provider: ProviderKind::Codex,
+            cwd: "/tmp".into(),
+            approval: ApprovalMode::Confirm,
+            prompt: "hi".to_owned(),
+        });
+
+        assert!(auto.args.iter().any(|arg| arg == "--full-auto"));
+        assert!(!confirm.args.iter().any(|arg| arg == "--full-auto"));
     }
 }

@@ -375,6 +375,7 @@ mod tests {
         let request = RunRequest {
             provider: ProviderKind::Codex,
             cwd: root.clone(),
+            approval: sah_domain::ApprovalMode::Auto,
             prompt: "test".to_owned(),
         };
         let record = store.create_run(request).expect("run");
@@ -437,6 +438,7 @@ mod tests {
         let request = RunRequest {
             provider: ProviderKind::Codex,
             cwd: root.clone(),
+            approval: sah_domain::ApprovalMode::Auto,
             prompt: "test".to_owned(),
         };
         let record = store.create_run(request).expect("run");
