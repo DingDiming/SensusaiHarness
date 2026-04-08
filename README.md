@@ -36,7 +36,7 @@ Runs are stored under `SAH_HOME` if set, otherwise under `~/.sah/`.
 Phase 1 commands in the new CLI:
 
 - `config show [--json]`
-- `config set [--provider codex|claude] [--approval auto|confirm] [--sah-home PATH]`
+- `config set [--provider codex|claude] [--approval auto|confirm] [--default-sah-home PATH]`
 - `doctor`
 - `doctor --json`
 - `delete <run-id> [--force]`
@@ -46,7 +46,7 @@ Phase 1 commands in the new CLI:
 - `providers list`
 - `providers list --json`
 - `run --approval auto|confirm`
-- `watch`
+- `watch [--follow]`
 - `resume <run-id> [--approval auto|confirm] [prompt]`
 
 Persistent config lives at `~/.config/sah/config.json` by default. You can override the file with `--config PATH` or `SAH_CONFIG`.
@@ -54,7 +54,7 @@ Persistent config lives at `~/.config/sah/config.json` by default. You can overr
 Example:
 
 ```bash
-cargo run -p sah-cli -- config set --provider codex --approval auto --sah-home ~/.sah
+cargo run -p sah-cli -- config set --provider codex --approval auto --default-sah-home ~/.sah
 cargo run -p sah-cli -- config show --json
 ```
 

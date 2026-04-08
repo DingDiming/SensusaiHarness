@@ -10,6 +10,8 @@ use sah_runtime::{execute_run, load_transcript, resume_run};
 use sah_store::{RunListFilters, Store};
 use serde::Serialize;
 use std::path::PathBuf;
+use std::thread;
+use std::time::Duration;
 
 #[derive(Parser)]
 #[command(name = "sah")]
@@ -75,6 +77,8 @@ enum Commands {
     },
     Watch {
         run_id: String,
+        #[arg(long, default_value_t = false)]
+        follow: bool,
     },
     Resume {
         run_id: String,
@@ -122,18 +126,18 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     let config_path = config::resolve_config_path(cli.config.clone());
     let config_file = config::load_config(&config_path)?;
-    let runtime_defaults = config::resolve_defaults(&config_path, &config_file, cli.sah_home)?;
+    let cli_sah_home = cli.sah_home.clone();
+    let runtime_defaults = config::resolve_defaults(&config_path, &config_file, cli_sah_home.clone())?;
     let store = Store::open(runtime_defaults.sah_home.clone())?;
     let providers = providers();
 
     match cli.command {
         Commands::Config { command } => match command {
             ConfigCommands::Show { json } => {
-                let resolved = config::resolve_defaults(&config_path, &config_file, None)?;
                 if json {
-                    print_json(&resolved)?;
+                    print_json(&runtime_defaults)?;
                 } else {
-                    print_resolved_defaults(&resolved);
+                    print_resolved_defaults(&runtime_defaults);
                 }
             }
             ConfigCommands::Set {
@@ -155,7 +159,8 @@ fn main() -> Result<()> {
                     clear_sah_home,
                 )?;
                 config::save_config(&config_path, &updated)?;
-                let resolved = config::resolve_defaults(&config_path, &updated, None)?;
+                let resolved =
+                    config::resolve_defaults(&config_path, &updated, cli_sah_home.clone())?;
 
                 if json {
                     print_json(&resolved)?;
@@ -348,22 +353,8 @@ fn main() -> Result<()> {
             println!("run_id: {}", record.id);
             println!("status: {}", record.status);
         }
-        Commands::Watch { run_id } => {
-            let (record, events) = load_transcript(&store, &run_id)?;
-            println!(
-                "run_id: {} provider={} status={} cwd={}",
-                record.id,
-                record.request.provider,
-                record.status,
-                record.request.cwd.display()
-            );
-            println!("approval: {}", record.request.approval);
-            println!("prompt: {}", record.request.prompt);
-            println!();
-
-            for event in events {
-                print_event(&event);
-            }
+        Commands::Watch { run_id, follow } => {
+            watch_run(&store, &run_id, follow)?;
         }
         Commands::Resume {
             run_id,
@@ -438,6 +429,59 @@ fn print_event(event: &RunEvent) {
         "[{:04}] {:<16} {}",
         event.sequence, event.kind, event.summary
     );
+}
+
+fn print_watch_header(record: &sah_domain::RunRecord) {
+    println!(
+        "run_id: {} provider={} status={} cwd={}",
+        record.id,
+        record.request.provider,
+        record.status,
+        record.request.cwd.display()
+    );
+    println!("approval: {}", record.request.approval);
+    println!("prompt: {}", record.request.prompt);
+    println!();
+}
+
+fn watch_run(store: &Store, run_id: &str, follow: bool) -> Result<()> {
+    let (record, events) = load_transcript(store, run_id)?;
+    print_watch_header(&record);
+
+    if !follow {
+        for event in events {
+            print_event(&event);
+        }
+        return Ok(());
+    }
+
+    let mut next_sequence = 1_u64;
+    loop {
+        let record = store.load_run(run_id)?;
+        let events = store.read_events(run_id)?;
+        let has_terminal_event = events.iter().any(|event| {
+            matches!(
+                event.kind,
+                sah_domain::RunEventKind::Completed | sah_domain::RunEventKind::Failed
+            )
+        });
+
+        for event in events {
+            if event.sequence < next_sequence {
+                continue;
+            }
+            next_sequence = event.sequence + 1;
+            print_event(&event);
+        }
+
+        if record.status != RunStatus::Running && has_terminal_event {
+            break;
+        }
+
+        thread::sleep(Duration::from_millis(200));
+    }
+
+    Ok(())
 }
 
 fn print_json<T: Serialize>(value: &T) -> Result<()> {

@@ -3,7 +3,7 @@
 ## Phase 1.5: CLI Beta Hardening
 
 - [x] Add persistent CLI config support for defaults such as provider, approval mode, and `SAH_HOME`
-- [ ] Add true live streaming for `watch` or `run --follow`, instead of replay-only transcript viewing
+- [x] Add true live streaming for `watch` or `run --follow`, instead of replay-only transcript viewing
 - [ ] Improve `inspect` and `list` summaries with workspace diff stats, command counts, and final message previews
 - [ ] Normalize Codex and Claude events into a stricter internal schema for message, command, usage, file change, completed, and failed states
 - [ ] Add fixture-based end-to-end tests for provider parsing, transcript persistence, resume, export, and delete flows
