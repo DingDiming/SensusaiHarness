@@ -14,7 +14,7 @@ use sah_runtime::{execute_run, load_transcript, resume_run};
 use sah_store::{RunListFilters, Store};
 use serde::Serialize;
 use std::fs;
-use std::io::{self, Write};
+use std::io::{self, IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::Duration;
@@ -75,6 +75,18 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    Chat {
+        #[arg(long)]
+        session: Option<String>,
+        #[arg(long)]
+        provider: Option<ProviderKind>,
+        #[arg(long)]
+        approval: Option<ApprovalMode>,
+        #[arg(long = "prompt-file")]
+        prompt_file: Option<PathBuf>,
+        #[arg(long, default_value = ".")]
+        cwd: PathBuf,
+    },
     Config {
         #[command(subcommand)]
         command: ConfigCommands,
@@ -88,6 +100,8 @@ enum Commands {
         session: String,
         #[arg(long)]
         approval: Option<ApprovalMode>,
+        #[arg(long = "prompt-file")]
+        prompt_file: Option<PathBuf>,
         prompt: Option<String>,
     },
     Archive {
@@ -156,7 +170,9 @@ enum Commands {
         approval: Option<ApprovalMode>,
         #[arg(long, default_value = ".")]
         cwd: PathBuf,
-        prompt: String,
+        #[arg(long = "prompt-file")]
+        prompt_file: Option<PathBuf>,
+        prompt: Option<String>,
     },
     Watch {
         run_id: String,
@@ -167,6 +183,8 @@ enum Commands {
         run_id: String,
         #[arg(long)]
         approval: Option<ApprovalMode>,
+        #[arg(long = "prompt-file")]
+        prompt_file: Option<PathBuf>,
         prompt: Option<String>,
     },
 }
@@ -220,6 +238,15 @@ enum SessionCommands {
     },
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum ChatInput {
+    Prompt(String),
+    Session,
+    Help,
+    Exit,
+    Ignore,
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
     let config_path = config::resolve_config_path(cli.config.clone());
@@ -231,6 +258,24 @@ fn main() -> Result<()> {
     let providers = providers();
 
     match cli.command {
+        Commands::Chat {
+            session,
+            provider,
+            approval,
+            prompt_file,
+            cwd,
+        } => {
+            run_chat(
+                &store,
+                &providers,
+                &runtime_defaults,
+                session,
+                provider,
+                approval,
+                prompt_file,
+                cwd,
+            )?;
+        }
         Commands::Config { command } => match command {
             ConfigCommands::Show { json } => {
                 if json {
@@ -276,6 +321,7 @@ fn main() -> Result<()> {
         Commands::Continue {
             session,
             approval,
+            prompt_file,
             prompt,
         } => {
             let session = resolve_session(&store, &session)?;
@@ -283,7 +329,7 @@ fn main() -> Result<()> {
             let adapter = resolve_provider(&providers, session.provider)
                 .with_context(|| format!("provider {} is not registered", session.provider))?;
             ensure_provider_ready(adapter)?;
-            let prompt = prompt.unwrap_or_else(|| "Continue.".to_owned());
+            let prompt = resolve_single_prompt(prompt, prompt_file, Some("Continue."))?;
             let approval = approval.unwrap_or(session.latest_approval);
             confirm_if_required(
                 "continue",
@@ -639,6 +685,7 @@ fn main() -> Result<()> {
             provider,
             approval,
             cwd,
+            prompt_file,
             prompt,
         } => {
             let provider = provider.unwrap_or(runtime_defaults.default_provider);
@@ -646,6 +693,7 @@ fn main() -> Result<()> {
             let cwd = cwd
                 .canonicalize()
                 .with_context(|| format!("failed to resolve cwd {}", cwd.display()))?;
+            let prompt = resolve_single_prompt(prompt, prompt_file, None)?;
             let adapter = resolve_provider(&providers, provider)
                 .with_context(|| format!("provider {} is not registered", provider))?;
             ensure_provider_ready(adapter)?;
@@ -668,6 +716,7 @@ fn main() -> Result<()> {
         Commands::Resume {
             run_id,
             approval,
+            prompt_file,
             prompt,
         } => {
             let previous = store.load_run(&run_id)?;
@@ -676,7 +725,7 @@ fn main() -> Result<()> {
                     format!("provider {} is not registered", previous.request.provider)
                 })?;
             ensure_provider_ready(adapter)?;
-            let prompt = prompt.unwrap_or_else(|| "Continue.".to_owned());
+            let prompt = resolve_single_prompt(prompt, prompt_file, Some("Continue."))?;
             let approval = approval.unwrap_or(previous.request.approval);
             confirm_if_required(
                 "resume",
@@ -736,6 +785,116 @@ fn default_archive_output(run_id: &str) -> PathBuf {
         .join("output")
         .join("archives")
         .join(run_id)
+}
+
+fn run_chat(
+    store: &Store,
+    providers: &[Box<dyn ProviderAdapter>],
+    runtime_defaults: &config::ResolvedDefaults,
+    session: Option<String>,
+    provider: Option<ProviderKind>,
+    approval: Option<ApprovalMode>,
+    prompt_file: Option<PathBuf>,
+    cwd: PathBuf,
+) -> Result<()> {
+    let mut current_run = None;
+    let mut scripted_prompts = if let Some(path) = prompt_file {
+        load_chat_prompts(&path)?
+    } else {
+        Vec::new()
+    }
+    .into_iter();
+    let (provider, approval, cwd) = if let Some(session_ref) = session {
+        if provider.is_some() {
+            bail!("--provider cannot be used with --session");
+        }
+        if cwd.as_path() != Path::new(".") {
+            bail!("--cwd cannot be used with --session");
+        }
+
+        let session = resolve_session(store, &session_ref)?;
+        let record = store.load_run(&session.latest_run_id)?;
+        current_run = Some(record);
+        (
+            session.provider,
+            approval.unwrap_or(session.latest_approval),
+            session.cwd,
+        )
+    } else {
+        (
+            provider.unwrap_or(runtime_defaults.default_provider),
+            approval.unwrap_or(runtime_defaults.default_approval),
+            cwd.canonicalize()
+                .with_context(|| format!("failed to resolve cwd {}", cwd.display()))?,
+        )
+    };
+
+    let adapter = resolve_provider(providers, provider)
+        .with_context(|| format!("provider {} is not registered", provider))?;
+    ensure_provider_ready(adapter)?;
+
+    println!(
+        "chat: provider={} approval={} cwd={}",
+        provider,
+        approval,
+        cwd.display()
+    );
+    println!("built-ins: :help :session :exit");
+    if let Some(record) = &current_run {
+        print_chat_session(record);
+    }
+
+    loop {
+        let input = if let Some(prompt) = scripted_prompts.next() {
+            println!("sah: {prompt}");
+            ChatInput::Prompt(prompt)
+        } else {
+            match prompt_line_or_eof("sah")? {
+                Some(input) => parse_chat_input(&input),
+                None => ChatInput::Exit,
+            }
+        };
+        match input {
+            ChatInput::Ignore => continue,
+            ChatInput::Help => {
+                println!("enter a prompt to continue the active conversation");
+                println!(":session shows the current provider session and latest run");
+                println!(":exit leaves chat");
+            }
+            ChatInput::Session => match &current_run {
+                Some(record) => print_chat_session(record),
+                None => println!("session: none"),
+            },
+            ChatInput::Exit => break,
+            ChatInput::Prompt(prompt) => {
+                confirm_if_required("chat", provider, &cwd, &prompt, approval)?;
+
+                let record = match &current_run {
+                    Some(previous) => {
+                        resume_run(store, adapter, previous, prompt, approval, print_event)?
+                    }
+                    None => execute_run(
+                        store,
+                        adapter,
+                        RunRequest {
+                            provider,
+                            cwd: cwd.clone(),
+                            approval,
+                            prompt,
+                        },
+                        print_event,
+                    )?,
+                };
+
+                println!();
+                print_chat_session(&record);
+                println!("status: {}", record.status);
+                current_run = Some(record);
+            }
+        }
+    }
+
+    Ok(())
 }
 
 fn build_prune_plan(
@@ -940,7 +1099,7 @@ fn collect_artifact_paths(root: &Path, current: &Path, paths: &mut Vec<PathBuf>)
     Ok(())
 }
 
-fn prompt_line(prompt: &str) -> Result<String> {
+fn prompt_line_or_eof(prompt: &str) -> Result<Option<String>> {
     print!("{prompt}: ");
     io::stdout()
         .flush()
@@ -951,10 +1110,98 @@ fn prompt_line(prompt: &str) -> Result<String> {
         .read_line(&mut input)
         .with_context(|| format!("failed to read prompt input: {}", prompt))?;
     if bytes == 0 {
-        return Ok("q".to_owned());
+        return Ok(None);
     }
 
-    Ok(input.trim().to_owned())
+    Ok(Some(input.trim().to_owned()))
+}
+
+fn prompt_line(prompt: &str) -> Result<String> {
+    Ok(prompt_line_or_eof(prompt)?.unwrap_or_else(|| "q".to_owned()))
+}
+
+fn resolve_single_prompt(
+    prompt: Option<String>,
+    prompt_file: Option<PathBuf>,
+    default_prompt: Option<&str>,
+) -> Result<String> {
+    if prompt.is_some() && prompt_file.is_some() {
+        bail!("prompt argument and --prompt-file cannot be used together");
+    }
+
+    if let Some(prompt) = prompt {
+        return normalize_prompt_text(prompt, "prompt argument");
+    }
+
+    if let Some(path) = prompt_file {
+        let prompt = fs::read_to_string(&path)
+            .with_context(|| format!("failed to read prompt file {}", path.display()))?;
+        return normalize_prompt_text(prompt, &format!("prompt file {}", path.display()));
+    }
+
+    if !io::stdin().is_terminal() {
+        let mut buffer = String::new();
+        io::stdin()
+            .read_to_string(&mut buffer)
+            .context("failed to read prompt from stdin")?;
+        if !buffer.trim().is_empty() {
+            return normalize_prompt_text(buffer, "stdin prompt");
+        }
+    }
+
+    if let Some(default_prompt) = default_prompt {
+        return Ok(default_prompt.to_owned());
+    }
+
+    bail!("prompt is required; provide an argument, --prompt-file, or pipe stdin")
+}
+
+fn normalize_prompt_text(prompt: String, source: &str) -> Result<String> {
+    let trimmed = prompt.trim_end_matches(['\r', '\n']);
+    if trimmed.trim().is_empty() {
+        bail!("{source} is empty");
+    }
+    Ok(trimmed.to_owned())
+}
+
+fn parse_chat_input(input: &str) -> ChatInput {
+    match input.trim() {
+        "" => ChatInput::Ignore,
+        ":exit" | ":quit" | "exit" | "quit" => ChatInput::Exit,
+        ":help" | "help" => ChatInput::Help,
+        ":session" => ChatInput::Session,
+        other => ChatInput::Prompt(other.to_owned()),
+    }
+}
+
+fn load_chat_prompts(path: &Path) -> Result<Vec<String>> {
+    let contents = fs::read_to_string(path)
+        .with_context(|| format!("failed to read chat prompt file {}", path.display()))?;
+    let prompts: Vec<String> = contents
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(ToOwned::to_owned)
+        .collect();
+
+    if prompts.is_empty() {
+        bail!(
+            "chat prompt file {} did not contain any prompts",
+            path.display()
+        );
+    }
+
+    Ok(prompts)
+}
+
+fn print_chat_session(record: &sah_domain::RunRecord) {
+    match &record.provider_session_id {
+        Some(session_id) => println!(
+            "session: {}:{} latest_run={}",
+            record.request.provider, session_id, record.id
+        ),
+        None => println!("session: pending latest_run={}", record.id),
+    }
 }
 
 fn resolve_session(store: &Store, value: &str) -> Result<SessionRecord> {
@@ -1312,6 +1559,50 @@ mod tests {
         assert_eq!(candidates[0].id, completed_old.id);
         assert_eq!(skipped_running.len(), 1);
         assert_eq!(skipped_running[0].id, running_old.id);
+    }
+
+    #[test]
+    fn parses_chat_builtins_and_prompts() {
+        assert_eq!(parse_chat_input(""), ChatInput::Ignore);
+        assert_eq!(parse_chat_input(":help"), ChatInput::Help);
+        assert_eq!(parse_chat_input(":session"), ChatInput::Session);
+        assert_eq!(parse_chat_input(":exit"), ChatInput::Exit);
+        assert_eq!(
+            parse_chat_input("Summarize this repo"),
+            ChatInput::Prompt("Summarize this repo".to_owned())
+        );
+    }
+
+    #[test]
+    fn load_chat_prompts_skips_blank_lines() {
+        let root = unique_test_dir("load-chat-prompts-skips-blank-lines");
+        fs::create_dir_all(&root).expect("root");
+        let path = root.join("chat.txt");
+        fs::write(&path, "first\n\n second \n").expect("prompt file");
+
+        let prompts = load_chat_prompts(&path).expect("chat prompts");
+        assert_eq!(prompts, vec!["first".to_owned(), "second".to_owned()]);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn resolve_single_prompt_reads_trimmed_file_contents() {
+        let root = unique_test_dir("resolve-single-prompt-reads-trimmed-file-contents");
+        fs::create_dir_all(&root).expect("root");
+        let path = root.join("prompt.txt");
+        fs::write(&path, "hello from file\n").expect("prompt file");
+
+        let prompt = resolve_single_prompt(None, Some(path), None).expect("prompt");
+        assert_eq!(prompt, "hello from file");
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn normalize_prompt_text_rejects_blank_values() {
+        let error = normalize_prompt_text("\n\n".to_owned(), "stdin prompt").expect_err("blank");
+        assert!(error.to_string().contains("stdin prompt is empty"));
     }
 
     fn run_record(id: &str, started_at_ms: u128, status: RunStatus) -> sah_domain::RunRecord {

@@ -47,9 +47,10 @@ Tagged releases also publish prebuilt binaries through [`.github/workflows/relea
 
 Phase 1 commands in the new CLI:
 
+- `chat [--session PROVIDER:SESSION_ID] [--provider codex|claude] [--approval auto|confirm] [--cwd PATH] [--prompt-file PATH]`
 - `config show [--json]`
 - `config set [--provider codex|claude] [--approval auto|confirm] [--default-sah-home PATH]`
-- `continue <provider:session-id> [--approval auto|confirm] [prompt]`
+- `continue <provider:session-id> [--approval auto|confirm] [--prompt-file PATH] [prompt]`
 - `archive <run-id> [--output PATH] [--delete-source]`
 - `browse [--limit N] [--provider codex|claude] [--status running|completed|failed]`
 - `doctor`
@@ -61,11 +62,11 @@ Phase 1 commands in the new CLI:
 - `providers list`
 - `providers list --json`
 - `prune --keep N [--provider codex|claude] [--status running|completed|failed] [--archive-root PATH] [--dry-run]`
-- `run --approval auto|confirm`
+- `run [--provider codex|claude] [--approval auto|confirm] [--cwd PATH] [--prompt-file PATH] [prompt]`
 - `sessions list [--limit N] [--provider codex|claude] [--json]`
 - `sessions inspect <provider:session-id> [--json]`
 - `watch <run-id> [--follow]`
-- `resume <run-id> [--approval auto|confirm] [prompt]`
+- `resume <run-id> [--approval auto|confirm] [--prompt-file PATH] [prompt]`
 
 Persistent config lives at `~/.config/sah/config.json` by default. You can override the file with `--config PATH` or `SAH_CONFIG`.
 
@@ -101,6 +102,15 @@ Session-oriented browsing and continuation are available for runs that expose a 
 - `sessions list` shows resumable conversations grouped by provider session
 - `sessions inspect <provider:session-id>` shows the run history inside a session
 - `continue <provider:session-id>` resumes the latest run in that session without looking up a raw run id
+- `chat --session <provider:session-id>` re-enters an existing conversation and keeps prompting inside one terminal loop
+
+`chat` provides a persistent terminal conversation loop. It uses `run` for the first prompt, `resume` for later prompts in the same provider session, and supports lightweight built-ins such as `:help`, `:session`, and `:exit`.
+
+Prompt sources are now scriptable across one-shot and interactive flows:
+
+- `run`, `continue`, and `resume` accept a positional prompt, `--prompt-file PATH`, or piped stdin
+- `chat --prompt-file PATH` treats each non-empty line in the file as one prompt turn
+- `chat` still accepts piped stdin line-by-line for non-interactive batch conversations
 
 `browse` provides a lightweight interactive terminal browser for recent runs. It lets you pick a run and switch between overview, transcript, commands, workspace, and artifact views from the terminal.
 

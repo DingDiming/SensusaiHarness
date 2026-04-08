@@ -539,8 +539,12 @@ pub fn ensure_run_workspace(root: &Path) -> Result<PathBuf> {
         .with_context(|| format!("failed to create workspace root {}", root.display()))?;
 
     for subdir in RUN_WORKSPACE_SUBDIRS {
-        fs::create_dir_all(root.join(subdir))
-            .with_context(|| format!("failed to create workspace subdir {}", root.join(subdir).display()))?;
+        fs::create_dir_all(root.join(subdir)).with_context(|| {
+            format!(
+                "failed to create workspace subdir {}",
+                root.join(subdir).display()
+            )
+        })?;
     }
 
     root.canonicalize()
@@ -599,7 +603,11 @@ pub fn write_approval_snapshot(
     gate_id: &str,
     payload: &Value,
 ) -> Result<ArtifactWriteResult> {
-    write_json_artifact(root, &format!("artifacts/approvals/{gate_id}.json"), payload)
+    write_json_artifact(
+        root,
+        &format!("artifacts/approvals/{gate_id}.json"),
+        payload,
+    )
 }
 
 pub fn write_handoff(root: &Path, sprint: usize, content: &str) -> Result<ArtifactWriteResult> {
@@ -615,7 +623,11 @@ pub fn write_checkpoint_metadata(
     sprint: usize,
     payload: &Value,
 ) -> Result<ArtifactWriteResult> {
-    write_json_artifact(root, &format!("checkpoints/sprint-{sprint:02}.json"), payload)
+    write_json_artifact(
+        root,
+        &format!("checkpoints/sprint-{sprint:02}.json"),
+        payload,
+    )
 }
 
 pub fn write_run_summary(root: &Path, content: &str) -> Result<ArtifactWriteResult> {
@@ -793,7 +805,11 @@ fn copy_dir_all(source: &Path, destination: &Path) -> Result<()> {
     Ok(())
 }
 
-fn write_text_artifact(root: &Path, relative_path: &str, content: &str) -> Result<ArtifactWriteResult> {
+fn write_text_artifact(
+    root: &Path,
+    relative_path: &str,
+    content: &str,
+) -> Result<ArtifactWriteResult> {
     let target = resolve_workspace_path(root, relative_path)?;
     if let Some(parent) = target.parent() {
         fs::create_dir_all(parent)
@@ -809,7 +825,11 @@ fn write_text_artifact(root: &Path, relative_path: &str, content: &str) -> Resul
     })
 }
 
-fn write_json_artifact(root: &Path, relative_path: &str, value: &Value) -> Result<ArtifactWriteResult> {
+fn write_json_artifact(
+    root: &Path,
+    relative_path: &str,
+    value: &Value,
+) -> Result<ArtifactWriteResult> {
     let content = serde_json::to_string_pretty(value)?;
     write_text_artifact(root, relative_path, &content)
 }
@@ -948,12 +968,9 @@ mod tests {
         )
         .expect("approval");
         let handoff = write_handoff(&root, 2, "# Handoff").expect("handoff");
-        let checkpoint = write_checkpoint_metadata(
-            &root,
-            2,
-            &serde_json::json!({ "name": "sprint-02" }),
-        )
-        .expect("checkpoint");
+        let checkpoint =
+            write_checkpoint_metadata(&root, 2, &serde_json::json!({ "name": "sprint-02" }))
+                .expect("checkpoint");
         let summary = write_run_summary(&root, "# Summary").expect("summary");
 
         assert_eq!(

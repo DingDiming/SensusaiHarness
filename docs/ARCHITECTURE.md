@@ -93,6 +93,7 @@ Session-oriented CLI commands aggregate runs by `provider + provider_session_id`
 - `sessions list` shows resumable conversations without exposing only raw run ids
 - `sessions inspect` shows the ordered run history within one provider session
 - `continue` resumes the latest run in a session by session ref instead of by run id
+- `chat` keeps the user inside one terminal loop and uses the same persisted session for multi-turn work
 
 `browse` adds a lightweight interactive terminal browser on top of the same persisted store. It reuses run summaries and transcript/artifact readers rather than introducing a separate cache or UI backend.
 
