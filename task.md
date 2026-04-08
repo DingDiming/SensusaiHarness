@@ -26,7 +26,7 @@
 
 ## Phase 4: Legacy Disposition
 
-- [ ] Audit everything under `legacy/` and mark each area as port, archive, or drop
+- [x] Audit everything under `legacy/` and mark each area as port, archive, or drop
 - [ ] Port only reusable non-Web assets from `legacy/` into the Rust mainline crates
 - [ ] Remove or quarantine legacy docs that conflict with the terminal-first architecture
 - [ ] Decide whether `legacy/` remains in this repository long-term or moves to a separate archive repository
