@@ -1,16 +1,17 @@
 use sah_domain::{ProviderKind, RunEvent, RunEventKind, RunRecord, RunRequest};
+use serde::Serialize;
 use serde_json::Value;
 use std::path::PathBuf;
 use std::process::Command;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub struct CommandSpec {
     pub program: String,
     pub args: Vec<String>,
     pub cwd: PathBuf,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub struct ProviderProbe {
     pub kind: ProviderKind,
     pub display_name: &'static str,

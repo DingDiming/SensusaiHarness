@@ -15,3 +15,5 @@ sah-domain = { path = "../sah-domain" }
 sah-provider = { path = "../sah-provider" }
 sah-runtime = { path = "../sah-runtime" }
 sah-store = { path = "../sah-store" }
+serde.workspace = true
+serde_json.workspace = true

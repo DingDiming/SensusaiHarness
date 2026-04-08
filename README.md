@@ -36,10 +36,12 @@ Runs are stored under `SAH_HOME` if set, otherwise under `~/.sah/`.
 Phase 1 commands in the new CLI:
 
 - `doctor`
+- `doctor --json`
 - `export <run-id> [--output PATH]`
-- `list [--limit N]`
-- `inspect <run-id>`
+- `list [--limit N] [--json]`
+- `inspect <run-id> [--json]`
 - `providers list`
+- `providers list --json`
 - `run --approval auto|confirm`
 - `watch`
 - `resume <run-id> [--approval auto|confirm] [prompt]`

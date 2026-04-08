@@ -6,6 +6,7 @@ use sah_domain::{ApprovalMode, ProviderKind, RunEvent, RunRequest};
 use sah_provider::{ProviderAdapter, ProviderProbe};
 use sah_runtime::{execute_run, load_transcript, resume_run};
 use sah_store::Store;
+use serde::Serialize;
 use std::path::PathBuf;
 
 #[derive(Parser)]
@@ -18,7 +19,10 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    Doctor,
+    Doctor {
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
     Export {
         run_id: String,
         #[arg(long)]
@@ -27,9 +31,13 @@ enum Commands {
     List {
         #[arg(long, default_value_t = 20)]
         limit: usize,
+        #[arg(long, default_value_t = false)]
+        json: bool,
     },
     Inspect {
         run_id: String,
+        #[arg(long, default_value_t = false)]
+        json: bool,
     },
     Providers {
         #[command(subcommand)]
@@ -61,7 +69,10 @@ enum Commands {
 
 #[derive(Subcommand)]
 enum ProviderCommands {
-    List,
+    List {
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
 }
 
 fn main() -> Result<()> {
@@ -70,12 +81,20 @@ fn main() -> Result<()> {
     let providers = providers();
 
     match cli.command {
-        Commands::Doctor => {
-            println!("store: {}", store.root().display());
-            println!();
+        Commands::Doctor { json } => {
+            let probes: Vec<ProviderProbe> = providers.iter().map(|provider| provider.probe()).collect();
+            if json {
+                print_json(&serde_json::json!({
+                    "store_root": store.root(),
+                    "providers": probes,
+                }))?;
+            } else {
+                println!("store: {}", store.root().display());
+                println!();
 
-            for provider in &providers {
-                print_probe(provider.probe());
+                for probe in probes {
+                    print_probe(probe);
+                }
             }
         }
         Commands::Export { run_id, output } => {
@@ -89,9 +108,11 @@ fn main() -> Result<()> {
             let exported = store.export_run_bundle(&run_id, &output)?;
             println!("exported: {}", exported.display());
         }
-        Commands::List { limit } => {
+        Commands::List { limit, json } => {
             let runs = store.list_runs(limit)?;
-            if runs.is_empty() {
+            if json {
+                print_json(&runs)?;
+            } else if runs.is_empty() {
                 println!("runs: none");
             } else {
                 for record in runs {
@@ -107,75 +128,90 @@ fn main() -> Result<()> {
                 }
             }
         }
-        Commands::Inspect { run_id } => {
+        Commands::Inspect { run_id, json } => {
             let record = store.load_run(&run_id)?;
             let commands = store.list_command_records(&run_id)?;
             let workspace = store.list_workspace_snapshots(&run_id)?;
             let artifacts_dir = store.artifacts_dir_for_run(&run_id);
 
-            println!("run_id: {}", record.id);
-            println!("provider: {}", record.request.provider);
-            println!("status: {}", record.status);
-            println!("cwd: {}", record.request.cwd.display());
-            println!("approval: {}", record.request.approval);
-            println!("prompt: {}", record.request.prompt);
-            if let Some(session_id) = &record.provider_session_id {
-                println!("provider_session_id: {}", session_id);
-            }
-            if let Some(parent) = &record.resumed_from_run_id {
-                println!("resumed_from: {}", parent);
-            }
-            println!("artifacts: {}", artifacts_dir.display());
-
-            if commands.is_empty() {
-                println!();
-                println!("commands: none");
+            if json {
+                print_json(&serde_json::json!({
+                    "record": record,
+                    "commands": commands,
+                    "workspace": workspace,
+                    "artifacts_dir": artifacts_dir,
+                }))?;
             } else {
-                println!();
-                println!("commands:");
-                for command in commands {
-                    println!(
-                        "- {} [{}] exit={} cmd={}",
-                        command.id,
-                        command.status,
-                        command
-                            .exit_code
-                            .map(|code| code.to_string())
-                            .unwrap_or_else(|| "-".to_owned()),
-                        command.command
-                    );
-                    if let Some(path) = command.output_artifact {
-                        println!("  output: {}", artifacts_dir.join(path).display());
+                println!("run_id: {}", record.id);
+                println!("provider: {}", record.request.provider);
+                println!("status: {}", record.status);
+                println!("cwd: {}", record.request.cwd.display());
+                println!("approval: {}", record.request.approval);
+                println!("prompt: {}", record.request.prompt);
+                if let Some(session_id) = &record.provider_session_id {
+                    println!("provider_session_id: {}", session_id);
+                }
+                if let Some(parent) = &record.resumed_from_run_id {
+                    println!("resumed_from: {}", parent);
+                }
+                println!("artifacts: {}", artifacts_dir.display());
+
+                if commands.is_empty() {
+                    println!();
+                    println!("commands: none");
+                } else {
+                    println!();
+                    println!("commands:");
+                    for command in commands {
+                        println!(
+                            "- {} [{}] exit={} cmd={}",
+                            command.id,
+                            command.status,
+                            command
+                                .exit_code
+                                .map(|code| code.to_string())
+                                .unwrap_or_else(|| "-".to_owned()),
+                            command.command
+                        );
+                        if let Some(path) = command.output_artifact {
+                            println!("  output: {}", artifacts_dir.join(path).display());
+                        }
                     }
                 }
-            }
 
-            if workspace.is_empty() {
-                println!();
-                println!("workspace: none");
-            } else {
-                println!();
-                println!("workspace:");
-                for snapshot in workspace {
-                    println!(
-                        "- {} changed_files={} git_root={}",
-                        snapshot.label,
-                        snapshot.changed_file_count,
-                        snapshot.git_root.unwrap_or_else(|| "-".to_owned())
-                    );
-                    if let Some(path) = snapshot.status_artifact {
-                        println!("  status: {}", artifacts_dir.join(path).display());
-                    }
-                    if let Some(path) = snapshot.diff_artifact {
-                        println!("  diff: {}", artifacts_dir.join(path).display());
+                if workspace.is_empty() {
+                    println!();
+                    println!("workspace: none");
+                } else {
+                    println!();
+                    println!("workspace:");
+                    for snapshot in workspace {
+                        println!(
+                            "- {} changed_files={} git_root={}",
+                            snapshot.label,
+                            snapshot.changed_file_count,
+                            snapshot.git_root.unwrap_or_else(|| "-".to_owned())
+                        );
+                        if let Some(path) = snapshot.status_artifact {
+                            println!("  status: {}", artifacts_dir.join(path).display());
+                        }
+                        if let Some(path) = snapshot.diff_artifact {
+                            println!("  diff: {}", artifacts_dir.join(path).display());
+                        }
                     }
                 }
             }
         }
         Commands::Providers { command } => match command {
-            ProviderCommands::List => {
-                for provider in &providers {
-                    print_probe(provider.probe());
+            ProviderCommands::List { json } => {
+                let probes: Vec<ProviderProbe> =
+                    providers.iter().map(|provider| provider.probe()).collect();
+                if json {
+                    print_json(&probes)?;
+                } else {
+                    for probe in probes {
+                        print_probe(probe);
+                    }
                 }
             }
         },
@@ -277,6 +313,11 @@ fn print_event(event: &RunEvent) {
         "[{:04}] {:<16} {}",
         event.sequence, event.kind, event.summary
     );
+}
+
+fn print_json<T: Serialize>(value: &T) -> Result<()> {
+    println!("{}", serde_json::to_string_pretty(value)?);
+    Ok(())
 }
 
 fn truncate(text: &str, max_chars: usize) -> String {
