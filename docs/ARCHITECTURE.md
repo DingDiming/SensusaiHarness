@@ -96,6 +96,12 @@ Retention controls also stay store-backed and filesystem-local:
 - `prune` operates on the sorted local run list, skipping active running runs
 - `prune --archive-root` combines both behaviors by archiving older runs before local deletion
 
+Exported bundles carry a stable `bundle.json` manifest:
+
+- `schema_version` currently starts at `1`
+- the manifest embeds the exported `run.json` record plus event, command, and workspace counts
+- `file_index` lists bundle-relative files so downstream tooling can inspect the bundle without scanning the filesystem ad hoc
+
 End-to-end regression coverage now lives under `crates/sah-runtime/tests/` and replays fixture provider stdout through the real runtime, store, and parser stack.
 
 ## Legacy Policy

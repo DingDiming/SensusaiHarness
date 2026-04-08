@@ -1,7 +1,8 @@
 use anyhow::{Context, Result, bail};
 use sah_domain::{
-    CommandRecord, CommandStatus, ProviderKind, RunEvent, RunEventKind, RunRecord, RunRequest,
-    RunStatus, SessionRecord, WorkspaceSnapshot, now_timestamp_ms,
+    CommandRecord, CommandStatus, ProviderKind, RUN_BUNDLE_SCHEMA_VERSION, RunBundleManifest,
+    RunEvent, RunEventKind, RunRecord, RunRequest, RunStatus, SessionRecord, WorkspaceSnapshot,
+    now_timestamp_ms,
 };
 use serde_json::Value;
 use std::collections::HashMap;
@@ -250,6 +251,7 @@ impl Store {
         }
 
         copy_dir_all(&source, destination)?;
+        self.write_bundle_manifest(run_id, destination)?;
         Ok(destination.to_path_buf())
     }
 
@@ -459,6 +461,26 @@ impl Store {
         self.commands_dir(run_id).join(format!("{command_id}.json"))
     }
 
+    fn write_bundle_manifest(&self, run_id: &str, destination: &Path) -> Result<()> {
+        let manifest = RunBundleManifest {
+            schema_version: RUN_BUNDLE_SCHEMA_VERSION,
+            exported_at_ms: now_timestamp_ms(),
+            run: self.load_run(run_id)?,
+            event_count: self.read_events(run_id)?.len(),
+            command_count: self.list_command_records(run_id)?.len(),
+            workspace_snapshot_count: self.list_workspace_snapshots(run_id)?.len(),
+            final_message_preview: self.read_final_message(run_id)?,
+            run_path: "run.json".to_owned(),
+            transcript_path: "events.jsonl".to_owned(),
+            artifacts_path: "artifacts".to_owned(),
+            file_index: list_relative_files(destination)?,
+        };
+
+        let path = destination.join("bundle.json");
+        fs::write(&path, serde_json::to_vec_pretty(&manifest)?)
+            .with_context(|| format!("failed to write bundle manifest {}", path.display()))
+    }
+
     fn save_command_record(&self, run_id: &str, record: &CommandRecord) -> Result<()> {
         let path = self.command_record_file(run_id, &record.id);
         let record = match fs::read(&path) {
@@ -651,6 +673,31 @@ fn copy_dir_all(source: &Path, destination: &Path) -> Result<()> {
                     destination_path.display()
                 )
             })?;
+        }
+    }
+
+    Ok(())
+}
+
+fn list_relative_files(root: &Path) -> Result<Vec<String>> {
+    let mut paths = Vec::new();
+    collect_relative_files(root, root, &mut paths)?;
+    paths.sort();
+    Ok(paths)
+}
+
+fn collect_relative_files(root: &Path, current: &Path, paths: &mut Vec<String>) -> Result<()> {
+    for entry in fs::read_dir(current)
+        .with_context(|| format!("failed to read directory {}", current.display()))?
+    {
+        let entry = entry?;
+        let path = entry.path();
+        let file_type = entry.file_type()?;
+
+        if file_type.is_dir() {
+            collect_relative_files(root, &path, paths)?;
+        } else if file_type.is_file() {
+            paths.push(path.strip_prefix(root)?.display().to_string());
         }
     }
 
@@ -903,11 +950,29 @@ mod tests {
         assert_eq!(exported, destination);
         assert!(exported.join("run.json").exists());
         assert!(exported.join("events.jsonl").exists());
+        assert!(exported.join("bundle.json").exists());
         assert!(
             exported
                 .join("artifacts")
                 .join("final-message.txt")
                 .exists()
+        );
+
+        let manifest: RunBundleManifest = serde_json::from_slice(
+            &fs::read(exported.join("bundle.json")).expect("read bundle manifest"),
+        )
+        .expect("parse bundle manifest");
+        assert_eq!(manifest.schema_version, RUN_BUNDLE_SCHEMA_VERSION);
+        assert_eq!(manifest.run.id, record.id);
+        assert_eq!(
+            manifest.final_message_preview.as_deref(),
+            Some("hello export")
+        );
+        assert!(
+            manifest
+                .file_index
+                .iter()
+                .any(|path| path == "events.jsonl")
         );
 
         let _ = fs::remove_dir_all(root);

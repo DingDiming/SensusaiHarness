@@ -14,7 +14,7 @@
 - [x] Add session-oriented commands for browsing and continuing prior conversations without depending on raw run IDs alone
 - [x] Add an interactive terminal run browser for recent runs, transcripts, commands, and artifacts
 - [x] Add run retention controls such as prune or archive for old local history and exported bundles
-- [ ] Add machine-readable export metadata so a run bundle can be inspected or replayed consistently across environments
+- [x] Add machine-readable export metadata so a run bundle can be inspected or replayed consistently across environments
 
 ## Phase 3: Release and OSS Readiness
 

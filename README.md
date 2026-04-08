@@ -98,6 +98,8 @@ Retention controls now cover both local run history and archived bundles:
 - `prune --keep N` keeps only the most recent matching runs in local storage
 - `prune --archive-root PATH` archives pruned runs before removing them from the local store
 
+Exported bundles now include a machine-readable `bundle.json` manifest at the bundle root. It captures the run record, summary counts, and a relative file index so bundles can be inspected or replayed consistently outside the original store.
+
 Each run now keeps:
 
 - normalized event transcripts

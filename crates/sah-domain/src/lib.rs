@@ -305,6 +305,24 @@ impl SessionRecord {
     }
 }
 
+pub const RUN_BUNDLE_SCHEMA_VERSION: u32 = 1;
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RunBundleManifest {
+    pub schema_version: u32,
+    pub exported_at_ms: u128,
+    pub run: RunRecord,
+    pub event_count: usize,
+    pub command_count: usize,
+    pub workspace_snapshot_count: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub final_message_preview: Option<String>,
+    pub run_path: String,
+    pub transcript_path: String,
+    pub artifacts_path: String,
+    pub file_index: Vec<String>,
+}
+
 pub fn new_run_id() -> String {
     Uuid::now_v7().to_string()
 }
