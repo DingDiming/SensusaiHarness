@@ -71,6 +71,25 @@ Already ported into the Rust mainline:
 - reusable artifact writers from `legacy/backend/src/harness/artifacts.py`
 - legacy artifact/workspace behavior assertions from `legacy/backend/tests/test_artifacts.py`
 
+## Cleanup Progress
+
+Removed from the working tree on 2026-04-08:
+
+- `legacy/backend/.venv`
+- `legacy/backend/__pycache__`
+- `legacy/backend/src/__pycache__`
+- `legacy/backend/src/harness/__pycache__`
+- `legacy/backend/src/routes/__pycache__`
+- `legacy/backend/tests/__pycache__`
+- `legacy/backend/.pytest_cache`
+- `legacy/backend/.ruff_cache`
+- `legacy/frontend/node_modules`
+- `legacy/frontend/.next`
+- `legacy/frontend/.env.local`
+- `legacy/web-core/target`
+
+After this cleanup, the frozen legacy tree is down to a few hundred kilobytes instead of multiple gigabytes.
+
 ## Recommended Order
 
 1. Remove generated `drop` content from `legacy/`.

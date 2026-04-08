@@ -10,5 +10,5 @@
 
 ## Phase 6: Mainline Cleanup
 
-- [ ] Remove the `drop` subset from `legacy/` and shrink the frozen reference tree
+- [x] Remove the `drop` subset from `legacy/` and shrink the frozen reference tree
 - [ ] Open a separate archive destination for the remaining historical legacy tree
