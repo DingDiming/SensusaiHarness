@@ -253,6 +253,20 @@ impl Store {
         Ok(destination.to_path_buf())
     }
 
+    pub fn archive_run(
+        &self,
+        run_id: &str,
+        destination: &Path,
+        delete_source: bool,
+    ) -> Result<PathBuf> {
+        let archived = self.export_run_bundle(run_id, destination)?;
+        if delete_source {
+            self.delete_run(run_id, false)?;
+        }
+
+        Ok(archived)
+    }
+
     pub fn delete_run(&self, run_id: &str, force: bool) -> Result<()> {
         let record = self.load_run(run_id)?;
         if record.status == RunStatus::Running && !force {
@@ -898,6 +912,45 @@ mod tests {
 
         let _ = fs::remove_dir_all(root);
         let _ = fs::remove_dir_all(export_root);
+    }
+
+    #[test]
+    fn archives_run_and_optionally_deletes_source() {
+        let root = unique_test_dir("archives-run-and-optionally-deletes-source");
+        let archive_root = unique_test_dir("archives-run-destination");
+        let store = Store::open(root.clone()).expect("store");
+
+        let mut record = store
+            .create_run(RunRequest {
+                provider: ProviderKind::Codex,
+                cwd: root.clone(),
+                approval: sah_domain::ApprovalMode::Auto,
+                prompt: "archive".to_owned(),
+            })
+            .expect("run");
+        store
+            .finalize_run(&mut record, Some(0))
+            .expect("finalize run");
+        let event = RunEvent::plain(1, RunEventKind::Message, "codex", "archive me");
+        store
+            .append_event(&record.id, &event)
+            .expect("append event");
+        store
+            .capture_event_artifacts(&record.id, &event)
+            .expect("capture artifacts");
+
+        let destination = archive_root.join(&record.id);
+        let archived = store
+            .archive_run(&record.id, &destination, true)
+            .expect("archive run");
+
+        assert_eq!(archived, destination);
+        assert!(archived.join("run.json").exists());
+        assert!(archived.join("events.jsonl").exists());
+        assert!(!root.join("runs").join(&record.id).exists());
+
+        let _ = fs::remove_dir_all(root);
+        let _ = fs::remove_dir_all(archive_root);
     }
 
     #[test]

@@ -82,6 +82,13 @@ enum Commands {
         approval: Option<ApprovalMode>,
         prompt: Option<String>,
     },
+    Archive {
+        run_id: String,
+        #[arg(long)]
+        output: Option<PathBuf>,
+        #[arg(long, default_value_t = false)]
+        delete_source: bool,
+    },
     Browse {
         #[arg(long, default_value_t = 20)]
         limit: usize,
@@ -108,6 +115,18 @@ enum Commands {
         status: Option<RunStatus>,
         #[arg(long, default_value_t = false)]
         json: bool,
+    },
+    Prune {
+        #[arg(long)]
+        keep: usize,
+        #[arg(long)]
+        provider: Option<ProviderKind>,
+        #[arg(long)]
+        status: Option<RunStatus>,
+        #[arg(long)]
+        archive_root: Option<PathBuf>,
+        #[arg(long, default_value_t = false)]
+        dry_run: bool,
     },
     Inspect {
         run_id: String,
@@ -275,6 +294,19 @@ fn main() -> Result<()> {
                 println!("resumed_from: {}", parent);
             }
         }
+        Commands::Archive {
+            run_id,
+            output,
+            delete_source,
+        } => {
+            let output = output.unwrap_or_else(|| default_archive_output(&run_id));
+            let archived = store.archive_run(&run_id, &output, delete_source)?;
+            println!("archived: {}", archived.display());
+            println!(
+                "deleted_source: {}",
+                if delete_source { "yes" } else { "no" }
+            );
+        }
         Commands::Browse {
             limit,
             provider,
@@ -362,6 +394,59 @@ fn main() -> Result<()> {
                             .unwrap_or_else(|| "-".to_owned()),
                     );
                 }
+            }
+        }
+        Commands::Prune {
+            keep,
+            provider,
+            status,
+            archive_root,
+            dry_run,
+        } => {
+            let runs = store.list_runs_filtered(usize::MAX, RunListFilters { provider, status })?;
+            let (candidates, skipped_running) = build_prune_plan(runs, keep);
+
+            if candidates.is_empty() {
+                println!("prune: nothing to do");
+            } else {
+                for record in &candidates {
+                    if dry_run {
+                        if let Some(root) = &archive_root {
+                            println!(
+                                "would archive and prune: {} -> {}",
+                                record.id,
+                                root.join(&record.id).display()
+                            );
+                        } else {
+                            println!("would prune: {}", record.id);
+                        }
+                        continue;
+                    }
+
+                    if let Some(root) = &archive_root {
+                        let destination = root.join(&record.id);
+                        let archived = store.archive_run(&record.id, &destination, true)?;
+                        println!(
+                            "archived and pruned: {} -> {}",
+                            record.id,
+                            archived.display()
+                        );
+                    } else {
+                        store.delete_run(&record.id, false)?;
+                        println!("pruned: {}", record.id);
+                    }
+                }
+            }
+
+            println!(
+                "summary: pruned={} skipped_running={} keep={} dry_run={}",
+                candidates.len(),
+                skipped_running.len(),
+                keep,
+                if dry_run { "yes" } else { "no" },
+            );
+            for record in skipped_running {
+                println!("skipped running: {}", record.id);
             }
         }
         Commands::Inspect { run_id, json } => {
@@ -619,6 +704,32 @@ fn print_probe(probe: ProviderProbe) {
         "{} [{}] binary={} version={} detail={}",
         probe.kind, status, probe.binary, version, probe.detail
     );
+}
+
+fn default_archive_output(run_id: &str) -> PathBuf {
+    std::env::current_dir()
+        .unwrap_or_else(|_| PathBuf::from("."))
+        .join("output")
+        .join("archives")
+        .join(run_id)
+}
+
+fn build_prune_plan(
+    runs: Vec<sah_domain::RunRecord>,
+    keep: usize,
+) -> (Vec<sah_domain::RunRecord>, Vec<sah_domain::RunRecord>) {
+    let mut candidates = Vec::new();
+    let mut skipped_running = Vec::new();
+
+    for record in runs.into_iter().skip(keep) {
+        if record.status == RunStatus::Running {
+            skipped_running.push(record);
+        } else {
+            candidates.push(record);
+        }
+    }
+
+    (candidates, skipped_running)
 }
 
 fn browse_runs(store: &Store, limit: usize, filters: RunListFilters) -> Result<()> {
@@ -1160,6 +1271,41 @@ mod tests {
         );
 
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn build_prune_plan_keeps_newest_and_skips_running() {
+        let completed_new = run_record("new", 300, RunStatus::Completed);
+        let running_old = run_record("running", 200, RunStatus::Running);
+        let completed_old = run_record("old", 100, RunStatus::Completed);
+
+        let (candidates, skipped_running) = build_prune_plan(
+            vec![completed_new, running_old.clone(), completed_old.clone()],
+            1,
+        );
+
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].id, completed_old.id);
+        assert_eq!(skipped_running.len(), 1);
+        assert_eq!(skipped_running[0].id, running_old.id);
+    }
+
+    fn run_record(id: &str, started_at_ms: u128, status: RunStatus) -> sah_domain::RunRecord {
+        sah_domain::RunRecord {
+            id: id.to_owned(),
+            request: RunRequest {
+                provider: ProviderKind::Codex,
+                cwd: PathBuf::from("/tmp"),
+                approval: ApprovalMode::Auto,
+                prompt: id.to_owned(),
+            },
+            status,
+            started_at_ms,
+            finished_at_ms: Some(started_at_ms + 1),
+            exit_code: Some(0),
+            provider_session_id: None,
+            resumed_from_run_id: None,
+        }
     }
 
     fn unique_test_dir(name: &str) -> PathBuf {

@@ -38,6 +38,7 @@ Phase 1 commands in the new CLI:
 - `config show [--json]`
 - `config set [--provider codex|claude] [--approval auto|confirm] [--default-sah-home PATH]`
 - `continue <provider:session-id> [--approval auto|confirm] [prompt]`
+- `archive <run-id> [--output PATH] [--delete-source]`
 - `browse [--limit N] [--provider codex|claude] [--status running|completed|failed]`
 - `doctor`
 - `doctor --json`
@@ -47,6 +48,7 @@ Phase 1 commands in the new CLI:
 - `inspect <run-id> [--json]`
 - `providers list`
 - `providers list --json`
+- `prune --keep N [--provider codex|claude] [--status running|completed|failed] [--archive-root PATH] [--dry-run]`
 - `run --approval auto|confirm`
 - `sessions list [--limit N] [--provider codex|claude] [--json]`
 - `sessions inspect <provider:session-id> [--json]`
@@ -89,6 +91,12 @@ Session-oriented browsing and continuation are available for runs that expose a 
 - `continue <provider:session-id>` resumes the latest run in that session without looking up a raw run id
 
 `browse` provides a lightweight interactive terminal browser for recent runs. It lets you pick a run and switch between overview, transcript, commands, workspace, and artifact views from the terminal.
+
+Retention controls now cover both local run history and archived bundles:
+
+- `archive <run-id> --delete-source` exports one run bundle to an archive path and optionally removes the local source run
+- `prune --keep N` keeps only the most recent matching runs in local storage
+- `prune --archive-root PATH` archives pruned runs before removing them from the local store
 
 Each run now keeps:
 

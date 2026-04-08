@@ -90,6 +90,12 @@ Session-oriented CLI commands aggregate runs by `provider + provider_session_id`
 
 `browse` adds a lightweight interactive terminal browser on top of the same persisted store. It reuses run summaries and transcript/artifact readers rather than introducing a separate cache or UI backend.
 
+Retention controls also stay store-backed and filesystem-local:
+
+- `archive` reuses bundle export semantics and can remove the active local copy after export
+- `prune` operates on the sorted local run list, skipping active running runs
+- `prune --archive-root` combines both behaviors by archiving older runs before local deletion
+
 End-to-end regression coverage now lives under `crates/sah-runtime/tests/` and replays fixture provider stdout through the real runtime, store, and parser stack.
 
 ## Legacy Policy
