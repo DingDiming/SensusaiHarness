@@ -35,6 +35,8 @@ Runs are stored under `SAH_HOME` if set, otherwise under `~/.sah/`.
 
 Phase 1 commands in the new CLI:
 
+- `config show [--json]`
+- `config set [--provider codex|claude] [--approval auto|confirm] [--sah-home PATH]`
 - `doctor`
 - `doctor --json`
 - `delete <run-id> [--force]`
@@ -46,6 +48,28 @@ Phase 1 commands in the new CLI:
 - `run --approval auto|confirm`
 - `watch`
 - `resume <run-id> [--approval auto|confirm] [prompt]`
+
+Persistent config lives at `~/.config/sah/config.json` by default. You can override the file with `--config PATH` or `SAH_CONFIG`.
+
+Example:
+
+```bash
+cargo run -p sah-cli -- config set --provider codex --approval auto --sah-home ~/.sah
+cargo run -p sah-cli -- config show --json
+```
+
+Resolution order for runtime defaults is:
+
+```text
+CLI flags > environment variables > config file > built-in defaults
+```
+
+Supported environment variables:
+
+- `SAH_CONFIG`
+- `SAH_PROVIDER`
+- `SAH_APPROVAL`
+- `SAH_HOME`
 
 When using `approval=confirm`, pass `--allow-interactive-provider` explicitly. This keeps the CLI from silently dropping into provider-managed confirmation prompts.
 

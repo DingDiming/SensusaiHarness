@@ -9,6 +9,7 @@ rust-version.workspace = true
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
+dirs.workspace = true
 provider-claude = { path = "../provider-claude" }
 provider-codex = { path = "../provider-codex" }
 sah-domain = { path = "../sah-domain" }

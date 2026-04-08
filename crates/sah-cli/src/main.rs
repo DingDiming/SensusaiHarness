@@ -1,3 +1,5 @@
+mod config;
+
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use provider_claude::ClaudeProvider;
@@ -13,12 +15,20 @@ use std::path::PathBuf;
 #[command(name = "sah")]
 #[command(about = "Terminal-first local agent harness for Codex CLI and Claude CLI")]
 struct Cli {
+    #[arg(long, global = true)]
+    config: Option<PathBuf>,
+    #[arg(long, global = true)]
+    sah_home: Option<PathBuf>,
     #[command(subcommand)]
     command: Commands,
 }
 
 #[derive(Subcommand)]
 enum Commands {
+    Config {
+        #[command(subcommand)]
+        command: ConfigCommands,
+    },
     Delete {
         run_id: String,
         #[arg(long, default_value_t = false)]
@@ -54,9 +64,9 @@ enum Commands {
     },
     Run {
         #[arg(long)]
-        provider: ProviderKind,
-        #[arg(long, default_value = "auto")]
-        approval: ApprovalMode,
+        provider: Option<ProviderKind>,
+        #[arg(long)]
+        approval: Option<ApprovalMode>,
         #[arg(long, default_value_t = false)]
         allow_interactive_provider: bool,
         #[arg(long, default_value = ".")]
@@ -77,6 +87,30 @@ enum Commands {
 }
 
 #[derive(Subcommand)]
+enum ConfigCommands {
+    Show {
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
+    Set {
+        #[arg(long)]
+        provider: Option<ProviderKind>,
+        #[arg(long)]
+        approval: Option<ApprovalMode>,
+        #[arg(long = "default-sah-home")]
+        sah_home: Option<PathBuf>,
+        #[arg(long, default_value_t = false)]
+        clear_provider: bool,
+        #[arg(long, default_value_t = false)]
+        clear_approval: bool,
+        #[arg(long = "clear-default-sah-home", default_value_t = false)]
+        clear_sah_home: bool,
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand)]
 enum ProviderCommands {
     List {
         #[arg(long, default_value_t = false)]
@@ -86,23 +120,67 @@ enum ProviderCommands {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
-    let store = Store::open_default()?;
+    let config_path = config::resolve_config_path(cli.config.clone());
+    let config_file = config::load_config(&config_path)?;
+    let runtime_defaults = config::resolve_defaults(&config_path, &config_file, cli.sah_home)?;
+    let store = Store::open(runtime_defaults.sah_home.clone())?;
     let providers = providers();
 
     match cli.command {
+        Commands::Config { command } => match command {
+            ConfigCommands::Show { json } => {
+                let resolved = config::resolve_defaults(&config_path, &config_file, None)?;
+                if json {
+                    print_json(&resolved)?;
+                } else {
+                    print_resolved_defaults(&resolved);
+                }
+            }
+            ConfigCommands::Set {
+                provider,
+                approval,
+                sah_home,
+                clear_provider,
+                clear_approval,
+                clear_sah_home,
+                json,
+            } => {
+                let updated = config::update_config_file(
+                    config_file,
+                    provider,
+                    approval,
+                    sah_home,
+                    clear_provider,
+                    clear_approval,
+                    clear_sah_home,
+                )?;
+                config::save_config(&config_path, &updated)?;
+                let resolved = config::resolve_defaults(&config_path, &updated, None)?;
+
+                if json {
+                    print_json(&resolved)?;
+                } else {
+                    println!("saved config: {}", config_path.display());
+                    print_resolved_defaults(&resolved);
+                }
+            }
+        },
         Commands::Delete { run_id, force } => {
             store.delete_run(&run_id, force)?;
             println!("deleted: {}", run_id);
         }
         Commands::Doctor { json } => {
-            let probes: Vec<ProviderProbe> = providers.iter().map(|provider| provider.probe()).collect();
+            let probes: Vec<ProviderProbe> =
+                providers.iter().map(|provider| provider.probe()).collect();
             if json {
                 print_json(&serde_json::json!({
                     "store_root": store.root(),
-                    "providers": probes,
+                    "defaults": &runtime_defaults,
+                    "providers": &probes,
                 }))?;
             } else {
                 println!("store: {}", store.root().display());
+                print_resolved_defaults(&runtime_defaults);
                 println!();
 
                 for probe in probes {
@@ -249,6 +327,8 @@ fn main() -> Result<()> {
             cwd,
             prompt,
         } => {
+            let provider = provider.unwrap_or(runtime_defaults.default_provider);
+            let approval = approval.unwrap_or(runtime_defaults.default_approval);
             let cwd = cwd
                 .canonicalize()
                 .with_context(|| format!("failed to resolve cwd {}", cwd.display()))?;
@@ -292,8 +372,9 @@ fn main() -> Result<()> {
             prompt,
         } => {
             let previous = store.load_run(&run_id)?;
-            let adapter = resolve_provider(&providers, previous.request.provider)
-                .with_context(|| format!("provider {} is not registered", previous.request.provider))?;
+            let adapter = resolve_provider(&providers, previous.request.provider).with_context(
+                || format!("provider {} is not registered", previous.request.provider),
+            )?;
             ensure_provider_ready(adapter)?;
             let prompt = prompt.unwrap_or_else(|| "Continue.".to_owned());
             let approval = approval.unwrap_or(previous.request.approval);
@@ -332,6 +413,23 @@ fn print_probe(probe: ProviderProbe) {
     println!(
         "{} [{}] binary={} version={} detail={}",
         probe.kind, status, probe.binary, version, probe.detail
+    );
+}
+
+fn print_resolved_defaults(defaults: &config::ResolvedDefaults) {
+    println!(
+        "config: {} exists={}",
+        defaults.config_path.display(),
+        defaults.config_exists
+    );
+    println!(
+        "defaults: provider={} ({}) approval={} ({}) sah_home={} ({})",
+        defaults.default_provider,
+        defaults.default_provider_source,
+        defaults.default_approval,
+        defaults.default_approval_source,
+        defaults.sah_home.display(),
+        defaults.sah_home_source,
     );
 }
 
