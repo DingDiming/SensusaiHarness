@@ -79,6 +79,12 @@ Each run now keeps:
 - command records and stdout artifacts
 - workspace snapshots before and after execution when `cwd` is inside a Git repository
 
+`list` and `inspect` now surface lightweight summaries from those artifacts:
+
+- command counts
+- workspace changed-file and diff presence stats
+- final message previews
+
 Validation:
 
 ```bash

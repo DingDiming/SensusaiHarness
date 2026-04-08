@@ -223,6 +223,22 @@ impl Store {
         self.artifacts_dir(run_id)
     }
 
+    pub fn read_final_message(&self, run_id: &str) -> Result<Option<String>> {
+        let path = self.artifacts_dir(run_id).join("final-message.txt");
+        if !path.exists() {
+            return Ok(None);
+        }
+
+        let message = fs::read_to_string(&path)
+            .with_context(|| format!("failed to read final message {}", path.display()))?;
+        let message = message.trim();
+        if message.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(message.to_owned()))
+        }
+    }
+
     pub fn save_workspace_snapshot(
         &self,
         run_id: &str,
@@ -838,6 +854,30 @@ mod tests {
         let events = store.read_events_since(&record.id, 2).expect("read since");
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].sequence, 2);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn reads_final_message_artifact() {
+        let root = unique_test_dir("reads-final-message-artifact");
+        let store = Store::open(root.clone()).expect("store");
+
+        let record = store
+            .create_run(RunRequest {
+                provider: ProviderKind::Codex,
+                cwd: root.clone(),
+                approval: sah_domain::ApprovalMode::Auto,
+                prompt: "final message".to_owned(),
+            })
+            .expect("run");
+        let event = RunEvent::plain(1, RunEventKind::Message, "codex", "done");
+        store
+            .capture_event_artifacts(&record.id, &event)
+            .expect("capture artifacts");
+
+        let message = store.read_final_message(&record.id).expect("read final message");
+        assert_eq!(message.as_deref(), Some("done"));
 
         let _ = fs::remove_dir_all(root);
     }

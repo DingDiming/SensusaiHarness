@@ -77,6 +77,12 @@ Transcript inspection now has two modes:
 - `watch <run-id>` replays the stored transcript that already exists on disk
 - `watch <run-id> --follow` polls the append-only transcript and waits for the terminal event before exiting
 
+CLI summaries are derived from persisted artifacts rather than a separate cache:
+
+- command counts come from `artifacts/commands/*.json`
+- final message previews come from `artifacts/final-message.txt`
+- workspace changed-file and diff presence stats come from `artifacts/workspace/*.json`
+
 ## Legacy Policy
 
 `legacy/` remains available as a reference pool. New runtime features should be built in the Rust workspace rather than threaded back into the old Web stack.

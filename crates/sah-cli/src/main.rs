@@ -4,7 +4,10 @@ use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use provider_claude::ClaudeProvider;
 use provider_codex::CodexProvider;
-use sah_domain::{ApprovalMode, ProviderKind, RunEvent, RunRequest, RunStatus};
+use sah_domain::{
+    ApprovalMode, CommandRecord, CommandStatus, ProviderKind, RunEvent, RunRequest, RunStatus,
+    WorkspaceSnapshot,
+};
 use sah_provider::{ProviderAdapter, ProviderProbe};
 use sah_runtime::{execute_run, load_transcript, resume_run};
 use sah_store::{RunListFilters, Store};
@@ -12,6 +15,35 @@ use serde::Serialize;
 use std::path::PathBuf;
 use std::thread;
 use std::time::Duration;
+
+#[derive(Clone, Debug, Serialize)]
+struct CommandSummary {
+    total: usize,
+    completed: usize,
+    failed: usize,
+    in_progress: usize,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct WorkspaceSummary {
+    before_changed_files: Option<usize>,
+    after_changed_files: Option<usize>,
+    before_has_diff: bool,
+    after_has_diff: bool,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct RunSummary {
+    commands: CommandSummary,
+    workspace: WorkspaceSummary,
+    final_message_preview: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct RunListEntry {
+    record: sah_domain::RunRecord,
+    summary: RunSummary,
+}
 
 #[derive(Parser)]
 #[command(name = "sah")]
@@ -212,11 +244,24 @@ fn main() -> Result<()> {
         } => {
             let runs = store.list_runs_filtered(limit, RunListFilters { provider, status })?;
             if json {
-                print_json(&runs)?;
+                let entries: Vec<RunListEntry> = runs
+                    .into_iter()
+                    .map(|record| {
+                        let summary = build_run_summary(
+                            &store,
+                            &record.id,
+                            None,
+                            None,
+                        )?;
+                        Ok(RunListEntry { record, summary })
+                    })
+                    .collect::<Result<_>>()?;
+                print_json(&entries)?;
             } else if runs.is_empty() {
                 println!("runs: none");
             } else {
                 for record in runs {
+                    let summary = build_run_summary(&store, &record.id, None, None)?;
                     let duration_ms = run_duration_ms(&record)
                         .map(|duration| duration.to_string())
                         .unwrap_or_else(|| "-".to_owned());
@@ -225,15 +270,25 @@ fn main() -> Result<()> {
                         .map(|code| code.to_string())
                         .unwrap_or_else(|| "-".to_owned());
                     println!(
-                        "{} provider={} status={} approval={} exit={} duration_ms={} started_ms={} prompt={}",
+                        "{} provider={} status={} approval={} exit={} duration_ms={} commands={} failed={} changed={}=>{} diff={}=>{} prompt={} final={}",
                         record.id,
                         record.request.provider,
                         record.status,
                         record.request.approval,
                         exit_code,
                         duration_ms,
-                        record.started_at_ms,
+                        summary.commands.total,
+                        summary.commands.failed,
+                        format_optional_count(summary.workspace.before_changed_files),
+                        format_optional_count(summary.workspace.after_changed_files),
+                        format_bool(summary.workspace.before_has_diff),
+                        format_bool(summary.workspace.after_has_diff),
                         truncate(&record.request.prompt, 72),
+                        summary
+                            .final_message_preview
+                            .as_deref()
+                            .map(|message| truncate(message, 48))
+                            .unwrap_or_else(|| "-".to_owned()),
                     );
                 }
             }
@@ -243,12 +298,14 @@ fn main() -> Result<()> {
             let commands = store.list_command_records(&run_id)?;
             let workspace = store.list_workspace_snapshots(&run_id)?;
             let artifacts_dir = store.artifacts_dir_for_run(&run_id);
+            let summary = build_run_summary(&store, &run_id, Some(&commands), Some(&workspace))?;
 
             if json {
                 print_json(&serde_json::json!({
                     "record": record,
                     "commands": commands,
                     "workspace": workspace,
+                    "summary": summary,
                     "artifacts_dir": artifacts_dir,
                 }))?;
             } else {
@@ -265,6 +322,22 @@ fn main() -> Result<()> {
                     println!("resumed_from: {}", parent);
                 }
                 println!("artifacts: {}", artifacts_dir.display());
+                println!(
+                    "summary: commands={} completed={} failed={} in_progress={} changed={}=>{} diff={}=>{} final={}",
+                    summary.commands.total,
+                    summary.commands.completed,
+                    summary.commands.failed,
+                    summary.commands.in_progress,
+                    format_optional_count(summary.workspace.before_changed_files),
+                    format_optional_count(summary.workspace.after_changed_files),
+                    format_bool(summary.workspace.before_has_diff),
+                    format_bool(summary.workspace.after_has_diff),
+                    summary
+                        .final_message_preview
+                        .as_deref()
+                        .map(|message| truncate(message, 120))
+                        .unwrap_or_else(|| "-".to_owned()),
+                );
 
                 if commands.is_empty() {
                     println!();
@@ -405,6 +478,87 @@ fn print_probe(probe: ProviderProbe) {
         "{} [{}] binary={} version={} detail={}",
         probe.kind, status, probe.binary, version, probe.detail
     );
+}
+
+fn build_run_summary(
+    store: &Store,
+    run_id: &str,
+    commands: Option<&[CommandRecord]>,
+    workspace: Option<&[WorkspaceSnapshot]>,
+) -> Result<RunSummary> {
+    let owned_commands;
+    let commands = match commands {
+        Some(commands) => commands,
+        None => {
+            owned_commands = store.list_command_records(run_id)?;
+            &owned_commands
+        }
+    };
+
+    let owned_workspace;
+    let workspace = match workspace {
+        Some(workspace) => workspace,
+        None => {
+            owned_workspace = store.list_workspace_snapshots(run_id)?;
+            &owned_workspace
+        }
+    };
+
+    let final_message_preview = store.read_final_message(run_id)?;
+
+    Ok(RunSummary {
+        commands: summarize_commands(commands),
+        workspace: summarize_workspace(workspace),
+        final_message_preview,
+    })
+}
+
+fn summarize_commands(commands: &[CommandRecord]) -> CommandSummary {
+    let mut summary = CommandSummary {
+        total: commands.len(),
+        completed: 0,
+        failed: 0,
+        in_progress: 0,
+    };
+
+    for command in commands {
+        match command.status {
+            CommandStatus::Completed => summary.completed += 1,
+            CommandStatus::Failed => summary.failed += 1,
+            CommandStatus::InProgress => summary.in_progress += 1,
+        }
+    }
+
+    summary
+}
+
+fn summarize_workspace(workspace: &[WorkspaceSnapshot]) -> WorkspaceSummary {
+    let before = workspace.iter().find(|snapshot| snapshot.label == "before");
+    let after = workspace
+        .iter()
+        .find(|snapshot| snapshot.label == "after")
+        .or_else(|| workspace.last());
+
+    WorkspaceSummary {
+        before_changed_files: before.map(|snapshot| snapshot.changed_file_count),
+        after_changed_files: after.map(|snapshot| snapshot.changed_file_count),
+        before_has_diff: before.and_then(|snapshot| snapshot.diff_artifact.as_ref()).is_some(),
+        after_has_diff: after.and_then(|snapshot| snapshot.diff_artifact.as_ref()).is_some(),
+    }
+}
+
+fn format_optional_count(value: Option<usize>) -> String {
+    value
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "-".to_owned())
+}
+
+fn format_bool(value: bool) -> &'static str {
+    if value {
+        "yes"
+    } else {
+        "no"
+    }
 }
 
 fn print_resolved_defaults(defaults: &config::ResolvedDefaults) {
