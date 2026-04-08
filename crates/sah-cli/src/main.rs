@@ -5,8 +5,9 @@ use clap::{Parser, Subcommand};
 use provider_claude::ClaudeProvider;
 use provider_codex::CodexProvider;
 use sah_domain::{
-    ApprovalMode, CommandRecord, CommandStatus, ProviderKind, RunEvent, RunRequest, RunStatus,
-    SessionRecord, WorkspaceSnapshot,
+    ApprovalMode, CommandRecord, CommandStatus, ProviderKind, RUN_BUNDLE_SCHEMA_VERSION, RunEvent,
+    RunRequest, RunStatus, STORE_LAYOUT_VERSION, SessionRecord, TRANSCRIPT_SCHEMA_VERSION,
+    WorkspaceSnapshot,
 };
 use sah_provider::{ProviderAdapter, ProviderProbe};
 use sah_runtime::{execute_run, load_transcript, resume_run};
@@ -51,6 +52,13 @@ struct RunListEntry {
 struct SessionInspectView {
     session: SessionRecord,
     runs: Vec<sah_domain::RunRecord>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct SchemaVersions {
+    transcript: u32,
+    store_layout: u32,
+    bundle: u32,
 }
 
 #[derive(Parser)]
@@ -317,15 +325,23 @@ fn main() -> Result<()> {
         Commands::Doctor { json } => {
             let probes: Vec<ProviderProbe> =
                 providers.iter().map(|provider| provider.probe()).collect();
+            let schema_versions = schema_versions();
             if json {
                 print_json(&serde_json::json!({
                     "store_root": store.root(),
                     "defaults": &runtime_defaults,
+                    "schema_versions": &schema_versions,
                     "providers": &probes,
                 }))?;
             } else {
                 println!("store: {}", store.root().display());
                 print_resolved_defaults(&runtime_defaults);
+                println!(
+                    "schema_versions: transcript={} store_layout={} bundle={}",
+                    schema_versions.transcript,
+                    schema_versions.store_layout,
+                    schema_versions.bundle,
+                );
                 println!();
 
                 for probe in probes {
@@ -681,6 +697,14 @@ fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+fn schema_versions() -> SchemaVersions {
+    SchemaVersions {
+        transcript: TRANSCRIPT_SCHEMA_VERSION,
+        store_layout: STORE_LAYOUT_VERSION,
+        bundle: RUN_BUNDLE_SCHEMA_VERSION,
+    }
 }
 
 fn providers() -> Vec<Box<dyn ProviderAdapter>> {

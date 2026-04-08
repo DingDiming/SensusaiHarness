@@ -301,10 +301,14 @@ impl SessionRecord {
 }
 
 pub const RUN_BUNDLE_SCHEMA_VERSION: u32 = 1;
+pub const TRANSCRIPT_SCHEMA_VERSION: u32 = 1;
+pub const STORE_LAYOUT_VERSION: u32 = 1;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RunBundleManifest {
     pub schema_version: u32,
+    pub transcript_schema_version: u32,
+    pub store_layout_version: u32,
     pub exported_at_ms: u128,
     pub run: RunRecord,
     pub event_count: usize,

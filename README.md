@@ -152,6 +152,7 @@ CI now runs on GitHub Actions through [`.github/workflows/ci.yml`](/Users/ddm/Do
 ## Repository Notes
 
 - Operations/setup guide: [`docs/OPERATIONS.md`](/Users/ddm/Documents/GitHub/SensusaiHarness/docs/OPERATIONS.md)
+- Compatibility/versioning guide: [`docs/COMPATIBILITY.md`](/Users/ddm/Documents/GitHub/SensusaiHarness/docs/COMPATIBILITY.md)
 - License: MIT, with the full text in `LICENSE`
 - Use GitHub issues and pull requests as the default backlog and review system.
 - Generated artifacts, local databases, and dependency directories are intentionally ignored.

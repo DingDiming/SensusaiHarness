@@ -1,8 +1,8 @@
 use anyhow::{Context, Result, bail};
 use sah_domain::{
     CommandRecord, CommandStatus, ProviderKind, RUN_BUNDLE_SCHEMA_VERSION, RunBundleManifest,
-    RunEvent, RunEventKind, RunRecord, RunRequest, RunStatus, SessionRecord, WorkspaceSnapshot,
-    now_timestamp_ms,
+    RunEvent, RunEventKind, RunRecord, RunRequest, RunStatus, STORE_LAYOUT_VERSION, SessionRecord,
+    TRANSCRIPT_SCHEMA_VERSION, WorkspaceSnapshot, now_timestamp_ms,
 };
 use serde_json::Value;
 use std::collections::HashMap;
@@ -464,6 +464,8 @@ impl Store {
     fn write_bundle_manifest(&self, run_id: &str, destination: &Path) -> Result<()> {
         let manifest = RunBundleManifest {
             schema_version: RUN_BUNDLE_SCHEMA_VERSION,
+            transcript_schema_version: TRANSCRIPT_SCHEMA_VERSION,
+            store_layout_version: STORE_LAYOUT_VERSION,
             exported_at_ms: now_timestamp_ms(),
             run: self.load_run(run_id)?,
             event_count: self.read_events(run_id)?.len(),
@@ -963,6 +965,11 @@ mod tests {
         )
         .expect("parse bundle manifest");
         assert_eq!(manifest.schema_version, RUN_BUNDLE_SCHEMA_VERSION);
+        assert_eq!(
+            manifest.transcript_schema_version,
+            TRANSCRIPT_SCHEMA_VERSION
+        );
+        assert_eq!(manifest.store_layout_version, STORE_LAYOUT_VERSION);
         assert_eq!(manifest.run.id, record.id);
         assert_eq!(
             manifest.final_message_preview.as_deref(),
