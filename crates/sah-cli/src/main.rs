@@ -19,6 +19,11 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    Delete {
+        run_id: String,
+        #[arg(long, default_value_t = false)]
+        force: bool,
+    },
     Doctor {
         #[arg(long, default_value_t = false)]
         json: bool,
@@ -85,6 +90,10 @@ fn main() -> Result<()> {
     let providers = providers();
 
     match cli.command {
+        Commands::Delete { run_id, force } => {
+            store.delete_run(&run_id, force)?;
+            println!("deleted: {}", run_id);
+        }
         Commands::Doctor { json } => {
             let probes: Vec<ProviderProbe> = providers.iter().map(|provider| provider.probe()).collect();
             if json {

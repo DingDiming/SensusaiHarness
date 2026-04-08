@@ -6,4 +6,4 @@
 - [x] Add CLI-side guardrails for `confirm` approval mode
 - [x] Add machine-readable `--json` output for inventory commands
 - [x] Add `list` filters and richer run summary fields
-- [ ] Add `delete` command for removing local run history
+- [x] Add `delete` command for removing local run history

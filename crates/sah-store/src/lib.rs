@@ -154,6 +154,17 @@ impl Store {
         Ok(destination.to_path_buf())
     }
 
+    pub fn delete_run(&self, run_id: &str, force: bool) -> Result<()> {
+        let record = self.load_run(run_id)?;
+        if record.status == RunStatus::Running && !force {
+            bail!("run {} is still running; pass --force to delete it anyway", run_id);
+        }
+
+        let run_dir = self.run_dir(run_id);
+        fs::remove_dir_all(&run_dir)
+            .with_context(|| format!("failed to delete run directory {}", run_dir.display()))
+    }
+
     pub fn read_events(&self, run_id: &str) -> Result<Vec<RunEvent>> {
         let path = self.events_file(run_id);
         if !path.exists() {
@@ -708,6 +719,53 @@ mod tests {
 
         let _ = fs::remove_dir_all(root);
         let _ = fs::remove_dir_all(export_root);
+    }
+
+    #[test]
+    fn deletes_completed_runs() {
+        let root = unique_test_dir("deletes-completed-runs");
+        let store = Store::open(root.clone()).expect("store");
+
+        let mut record = store
+            .create_run(RunRequest {
+                provider: ProviderKind::Codex,
+                cwd: root.clone(),
+                approval: sah_domain::ApprovalMode::Auto,
+                prompt: "delete".to_owned(),
+            })
+            .expect("run");
+        store.finalize_run(&mut record, Some(0)).expect("finalize run");
+
+        store.delete_run(&record.id, false).expect("delete run");
+        assert!(!root.join("runs").join(&record.id).exists());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn refuses_to_delete_running_runs_without_force() {
+        let root = unique_test_dir("refuses-to-delete-running-runs-without-force");
+        let store = Store::open(root.clone()).expect("store");
+
+        let record = store
+            .create_run(RunRequest {
+                provider: ProviderKind::Codex,
+                cwd: root.clone(),
+                approval: sah_domain::ApprovalMode::Auto,
+                prompt: "running".to_owned(),
+            })
+            .expect("run");
+
+        let error = store
+            .delete_run(&record.id, false)
+            .expect_err("delete should fail");
+        assert!(error.to_string().contains("still running"));
+        assert!(root.join("runs").join(&record.id).exists());
+
+        store.delete_run(&record.id, true).expect("force delete");
+        assert!(!root.join("runs").join(&record.id).exists());
+
+        let _ = fs::remove_dir_all(root);
     }
 
     fn unique_test_dir(name: &str) -> PathBuf {
