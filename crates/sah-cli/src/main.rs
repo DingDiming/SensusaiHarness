@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use provider_claude::ClaudeProvider;
 use provider_codex::CodexProvider;
@@ -186,6 +186,7 @@ fn main() -> Result<()> {
                 .with_context(|| format!("failed to resolve cwd {}", cwd.display()))?;
             let adapter = resolve_provider(&providers, provider)
                 .with_context(|| format!("provider {} is not registered", provider))?;
+            ensure_provider_ready(adapter)?;
             let request = RunRequest {
                 provider,
                 cwd,
@@ -223,6 +224,7 @@ fn main() -> Result<()> {
             let previous = store.load_run(&run_id)?;
             let adapter = resolve_provider(&providers, previous.request.provider)
                 .with_context(|| format!("provider {} is not registered", previous.request.provider))?;
+            ensure_provider_ready(adapter)?;
             let prompt = prompt.unwrap_or_else(|| "Continue.".to_owned());
             let approval = approval.unwrap_or(previous.request.approval);
 
@@ -277,4 +279,18 @@ fn truncate(text: &str, max_chars: usize) -> String {
     let mut truncated: String = text.chars().take(max_chars).collect();
     truncated.push_str("...");
     truncated
+}
+
+fn ensure_provider_ready(provider: &dyn ProviderAdapter) -> Result<()> {
+    let probe = provider.probe();
+    if probe.available {
+        return Ok(());
+    }
+
+    bail!(
+        "provider {} is unavailable: binary={} detail={}",
+        probe.kind,
+        probe.binary,
+        probe.detail
+    );
 }
