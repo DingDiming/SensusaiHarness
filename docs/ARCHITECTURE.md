@@ -84,6 +84,8 @@ CLI summaries are derived from persisted artifacts rather than a separate cache:
 - final message previews come from `artifacts/final-message.txt`
 - workspace changed-file and diff presence stats come from `artifacts/workspace/*.json`
 
+End-to-end regression coverage now lives under `crates/sah-runtime/tests/` and replays fixture provider stdout through the real runtime, store, and parser stack.
+
 ## Legacy Policy
 
 `legacy/` remains available as a reference pool. New runtime features should be built in the Rust workspace rather than threaded back into the old Web stack.

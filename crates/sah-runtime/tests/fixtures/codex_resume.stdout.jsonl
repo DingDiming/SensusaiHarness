@@ -1,0 +1,2 @@
+{"type":"item.completed","item":{"type":"agent_message","text":"SECOND"}}
+{"type":"turn.completed","usage":{"input_tokens":8,"output_tokens":3,"cached_input_tokens":0}}

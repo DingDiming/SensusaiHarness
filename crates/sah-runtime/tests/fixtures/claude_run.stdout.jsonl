@@ -1,0 +1,3 @@
+{"type":"assistant","session_id":"session-1","message":{"content":[{"type":"tool_use","name":"Write","input":{"file_path":"notes.txt"}}]}}
+{"type":"assistant","session_id":"session-1","message":{"content":[{"type":"text","text":"DONE"}]}}
+{"type":"result","is_error":false,"duration_ms":5,"total_cost_usd":0.0,"usage":{"input_tokens":7,"output_tokens":2}}

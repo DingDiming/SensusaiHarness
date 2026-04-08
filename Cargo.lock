@@ -400,6 +400,8 @@ name = "sah-runtime"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "provider-claude",
+ "provider-codex",
  "sah-domain",
  "sah-provider",
  "sah-store",

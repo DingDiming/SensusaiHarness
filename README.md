@@ -100,6 +100,7 @@ Validation:
 
 ```bash
 cargo check
+cargo test -p sah-runtime
 ```
 
 ## Repository Notes

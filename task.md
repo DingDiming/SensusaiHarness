@@ -6,7 +6,7 @@
 - [x] Add true live streaming for `watch` or `run --follow`, instead of replay-only transcript viewing
 - [x] Improve `inspect` and `list` summaries with workspace diff stats, command counts, and final message previews
 - [x] Normalize Codex and Claude events into a stricter internal schema for message, command, usage, file change, completed, and failed states
-- [ ] Add fixture-based end-to-end tests for provider parsing, transcript persistence, resume, export, and delete flows
+- [x] Add fixture-based end-to-end tests for provider parsing, transcript persistence, resume, export, and delete flows
 
 ## Phase 2: Native Terminal Workflow
 

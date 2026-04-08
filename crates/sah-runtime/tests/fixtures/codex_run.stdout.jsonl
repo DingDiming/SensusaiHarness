@@ -1,0 +1,6 @@
+{"type":"thread.started","thread_id":"thread-1"}
+{"type":"item.started","item":{"id":"cmd-1","type":"command_execution","command":"echo hi","exit_code":null,"aggregated_output":""}}
+{"type":"item.completed","item":{"id":"cmd-1","type":"command_execution","command":"echo hi","exit_code":0,"aggregated_output":"hi\n"}}
+{"type":"item.completed","item":{"type":"apply_patch","path":"src/main.rs"}}
+{"type":"item.completed","item":{"type":"agent_message","text":"DONE"}}
+{"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":4,"cached_input_tokens":1}}

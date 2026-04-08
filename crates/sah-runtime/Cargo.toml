@@ -11,3 +11,7 @@ anyhow.workspace = true
 sah-domain = { path = "../sah-domain" }
 sah-provider = { path = "../sah-provider" }
 sah-store = { path = "../sah-store" }
+
+[dev-dependencies]
+provider-claude = { path = "../provider-claude" }
+provider-codex = { path = "../provider-codex" }
