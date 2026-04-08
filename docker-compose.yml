@@ -1,0 +1,44 @@
+services:
+  # ── Rust API Gateway ──────────────────────────────────
+  core:
+    build: ./core
+    ports:
+      - "4000:4000"
+    environment:
+      PORT: "4000"
+      JWT_SECRET: "${JWT_SECRET:-dev-secret-change-in-prod}"
+      PYTHON_UPSTREAM: "http://backend:8000"
+    depends_on:
+      backend:
+        condition: service_started
+
+  # ── Python Harness Backend ────────────────────────────
+  backend:
+    build: ./backend
+    environment:
+      DATABASE_URL: "/data/sensusai.db"
+      JWT_SECRET: "${JWT_SECRET:-dev-secret-change-in-prod}"
+      CORE_URL: "http://core:4000"
+      USE_CODEX: "true"
+      DEFAULT_MODEL: "${DEFAULT_MODEL:-gpt-5.4-mini}"
+      BOOTSTRAP_ADMIN_USERNAME: "${BOOTSTRAP_ADMIN_USERNAME:-}"
+      BOOTSTRAP_ADMIN_PASSWORD: "${BOOTSTRAP_ADMIN_PASSWORD:-}"
+      HOME: "/root"
+    volumes:
+      - db-data:/data
+      - ${HOME}/.codex:/root/.codex
+
+  # ── Next.js Frontend ──────────────────────────────────
+  frontend:
+    build: ./frontend
+    ports:
+      - "3000:3000"
+    environment:
+      HOSTNAME: "0.0.0.0"
+      CORE_URL: "http://core:4000"
+    depends_on:
+      core:
+        condition: service_started
+
+volumes:
+  db-data:
