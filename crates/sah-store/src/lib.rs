@@ -86,6 +86,37 @@ impl Store {
         Ok(serde_json::from_slice(&bytes)?)
     }
 
+    pub fn list_runs(&self, limit: usize) -> Result<Vec<RunRecord>> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+
+        let mut records = Vec::new();
+        for entry in fs::read_dir(self.runs_dir())
+            .with_context(|| format!("failed to read runs directory {}", self.runs_dir().display()))?
+        {
+            let entry = entry?;
+            let path = entry.path().join("run.json");
+            if !path.exists() {
+                continue;
+            }
+
+            let bytes = fs::read(&path)
+                .with_context(|| format!("failed to read run record {}", path.display()))?;
+            let record: RunRecord = serde_json::from_slice(&bytes)?;
+            records.push(record);
+        }
+
+        records.sort_by(|left, right| {
+            right
+                .started_at_ms
+                .cmp(&left.started_at_ms)
+                .then_with(|| right.id.cmp(&left.id))
+        });
+        records.truncate(limit);
+        Ok(records)
+    }
+
     pub fn read_events(&self, run_id: &str) -> Result<Vec<RunEvent>> {
         let path = self.events_file(run_id);
         if !path.exists() {
@@ -199,7 +230,11 @@ impl Store {
     }
 
     fn run_dir(&self, run_id: &str) -> PathBuf {
-        self.root.join("runs").join(run_id)
+        self.runs_dir().join(run_id)
+    }
+
+    fn runs_dir(&self) -> PathBuf {
+        self.root.join("runs")
     }
 
     fn run_file(&self, run_id: &str) -> PathBuf {
@@ -488,6 +523,45 @@ mod tests {
         assert_eq!(commands[0].status, CommandStatus::Completed);
         assert!(commands[0].started_at_ms.is_some());
         assert!(commands[0].finished_at_ms.is_some());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn lists_recent_runs_in_descending_order() {
+        let root = unique_test_dir("lists-recent-runs-in-descending-order");
+        let store = Store::open(root.clone()).expect("store");
+
+        let mut first = store
+            .create_run(RunRequest {
+                provider: ProviderKind::Codex,
+                cwd: root.clone(),
+                approval: sah_domain::ApprovalMode::Auto,
+                prompt: "first".to_owned(),
+            })
+            .expect("first run");
+        first.started_at_ms = 100;
+        store.save_run(&first).expect("save first");
+
+        let mut second = store
+            .create_run(RunRequest {
+                provider: ProviderKind::Claude,
+                cwd: root.clone(),
+                approval: sah_domain::ApprovalMode::Confirm,
+                prompt: "second".to_owned(),
+            })
+            .expect("second run");
+        second.started_at_ms = 200;
+        store.save_run(&second).expect("save second");
+
+        let runs = store.list_runs(10).expect("list runs");
+        assert_eq!(runs.len(), 2);
+        assert_eq!(runs[0].id, second.id);
+        assert_eq!(runs[1].id, first.id);
+
+        let limited = store.list_runs(1).expect("list limited");
+        assert_eq!(limited.len(), 1);
+        assert_eq!(limited[0].id, second.id);
 
         let _ = fs::remove_dir_all(root);
     }

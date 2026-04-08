@@ -19,6 +19,10 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     Doctor,
+    List {
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+    },
     Inspect {
         run_id: String,
     },
@@ -63,6 +67,24 @@ fn main() -> Result<()> {
 
             for provider in &providers {
                 print_probe(provider.probe());
+            }
+        }
+        Commands::List { limit } => {
+            let runs = store.list_runs(limit)?;
+            if runs.is_empty() {
+                println!("runs: none");
+            } else {
+                for record in runs {
+                    println!(
+                        "{} provider={} status={} approval={} started_ms={} prompt={}",
+                        record.id,
+                        record.request.provider,
+                        record.status,
+                        record.request.approval,
+                        record.started_at_ms,
+                        truncate(&record.request.prompt, 72),
+                    );
+                }
             }
         }
         Commands::Inspect { run_id } => {
@@ -229,4 +251,14 @@ fn print_event(event: &RunEvent) {
         "[{:04}] {:<16} {}",
         event.sequence, event.kind, event.summary
     );
+}
+
+fn truncate(text: &str, max_chars: usize) -> String {
+    if text.chars().count() <= max_chars {
+        return text.to_owned();
+    }
+
+    let mut truncated: String = text.chars().take(max_chars).collect();
+    truncated.push_str("...");
+    truncated
 }

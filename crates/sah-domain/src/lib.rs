@@ -44,6 +44,7 @@ impl FromStr for ProviderKind {
 pub struct RunRequest {
     pub provider: ProviderKind,
     pub cwd: PathBuf,
+    #[serde(default)]
     pub approval: ApprovalMode,
     pub prompt: String,
 }
@@ -61,6 +62,12 @@ impl ApprovalMode {
             Self::Auto => "auto",
             Self::Confirm => "confirm",
         }
+    }
+}
+
+impl Default for ApprovalMode {
+    fn default() -> Self {
+        Self::Auto
     }
 }
 
