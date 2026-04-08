@@ -20,7 +20,7 @@
 
 - [x] Add a `LICENSE` and finalize the public open-source licensing choice
 - [x] Add CI for `cargo fmt --check`, `cargo clippy`, `cargo test`, and basic CLI smoke coverage
-- [ ] Add release packaging for prebuilt binaries and a documented `cargo install` path
+- [x] Add release packaging for prebuilt binaries and a documented `cargo install` path
 - [ ] Expand docs for provider setup, authentication expectations, common failures, and local data layout
 - [ ] Add versioning and compatibility rules for transcript schema, store layout, and exported bundles
 

@@ -31,6 +31,18 @@ cargo run -p sah-cli -- run --provider codex --approval auto --cwd . "Summarize 
 
 Runs are stored under `SAH_HOME` if set, otherwise under `~/.sah/`.
 
+## Install
+
+For a local checkout:
+
+```bash
+cargo install --path crates/sah-cli
+```
+
+This installs the terminal binary as `sah`.
+
+Tagged releases also publish prebuilt binaries through [`.github/workflows/release.yml`](/Users/ddm/Documents/GitHub/SensusaiHarness/.github/workflows/release.yml).
+
 ## Development
 
 Phase 1 commands in the new CLI:
