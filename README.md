@@ -48,6 +48,7 @@ Tagged releases also publish prebuilt binaries through [`.github/workflows/relea
 Phase 1 commands in the new CLI:
 
 - `chat [--session PROVIDER:SESSION_ID] [--provider codex|claude] [--approval auto|confirm] [--cwd PATH] [--prompt-file PATH]`
+- `completion <bash|elvish|fish|powershell|zsh>`
 - `config provider show <provider> [--json]`
 - `config provider set <provider> [--binary PATH] [--model MODEL] [--arg ARG]... [--json]`
 - `config show [--json]`
@@ -61,6 +62,7 @@ Phase 1 commands in the new CLI:
 - `export <run-id> [--output PATH]`
 - `list [--limit N] [--provider codex|claude] [--status running|completed|failed] [--json]`
 - `inspect <run-id> [--json]`
+- `man [--output-dir PATH]`
 - `providers list`
 - `providers list --json`
 - `prune --keep N [--provider codex|claude] [--status running|completed|failed] [--archive-root PATH] [--dry-run]`
@@ -126,6 +128,11 @@ Prompt sources are now scriptable across one-shot and interactive flows:
 - `run`, `continue`, and `resume` accept a positional prompt, `--prompt-file PATH`, or piped stdin
 - `chat --prompt-file PATH` treats each non-empty line in the file as one prompt turn
 - `chat` still accepts piped stdin line-by-line for non-interactive batch conversations
+
+Terminal integration helpers are now built into the CLI:
+
+- `sah completion zsh` prints a shell completion script to stdout
+- `sah man --output-dir ./output/man` writes `sah.1` plus subcommand man pages such as `sah-run.1` and `sah-config-provider-set.1`
 
 `browse` provides a lightweight interactive terminal browser for recent runs. It lets you pick a run and switch between overview, transcript, commands, workspace, and artifact views from the terminal.
 

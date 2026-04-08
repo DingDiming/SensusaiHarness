@@ -14,6 +14,8 @@ path = "src/main.rs"
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
+clap_complete.workspace = true
+clap_mangen.workspace = true
 dirs.workspace = true
 provider-claude = { path = "../provider-claude" }
 provider-codex = { path = "../provider-codex" }

@@ -112,6 +112,11 @@ Exported bundles carry a stable `bundle.json` manifest:
 
 End-to-end regression coverage now lives under `crates/sah-runtime/tests/` and replays fixture provider stdout through the real runtime, store, and parser stack.
 
+Terminal distribution helpers are also derived from the same clap command tree:
+
+- `completion <shell>` renders shell completion scripts to stdout
+- `man` renders a root man page plus recursive subcommand man pages under the chosen output directory
+
 ## Legacy Policy
 
 `legacy/` remains available as a reference pool. New runtime features should be built in the Rust workspace rather than threaded back into the old Web stack.

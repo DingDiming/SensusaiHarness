@@ -1,7 +1,7 @@
 mod config;
 
 use anyhow::{Context, Result, bail};
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
 use provider_claude::ClaudeProvider;
 use provider_codex::CodexProvider;
 use sah_domain::{
@@ -111,6 +111,9 @@ enum Commands {
         #[arg(long, default_value_t = false)]
         delete_source: bool,
     },
+    Completion {
+        shell: clap_complete::Shell,
+    },
     Browse {
         #[arg(long, default_value_t = 20)]
         limit: usize,
@@ -158,6 +161,10 @@ enum Commands {
     Providers {
         #[command(subcommand)]
         command: ProviderCommands,
+    },
+    Man {
+        #[arg(long)]
+        output_dir: Option<PathBuf>,
     },
     Sessions {
         #[command(subcommand)]
@@ -440,6 +447,10 @@ fn main() -> Result<()> {
         } => {
             browse_runs(&store, limit, RunListFilters { provider, status })?;
         }
+        Commands::Completion { shell } => {
+            let mut command = Cli::command();
+            clap_complete::generate(shell, &mut command, "sah", &mut io::stdout());
+        }
         Commands::Doctor { json } => {
             let probes: Vec<ProviderProbe> =
                 providers.iter().map(|provider| provider.probe()).collect();
@@ -688,6 +699,16 @@ fn main() -> Result<()> {
                 }
             }
         },
+        Commands::Man { output_dir } => {
+            let output_dir = output_dir.unwrap_or_else(|| {
+                std::env::current_dir()
+                    .unwrap_or_else(|_| PathBuf::from("."))
+                    .join("output")
+                    .join("man")
+            });
+            render_man_pages(&output_dir)?;
+            println!("man_pages: {}", output_dir.display());
+        }
         Commands::Sessions { command } => match command {
             SessionCommands::List {
                 limit,
@@ -860,6 +881,43 @@ fn default_archive_output(run_id: &str) -> PathBuf {
         .join("output")
         .join("archives")
         .join(run_id)
+}
+
+fn render_man_pages(output_dir: &Path) -> Result<()> {
+    fs::create_dir_all(output_dir)
+        .with_context(|| format!("failed to create man output dir {}", output_dir.display()))?;
+
+    for (name, contents) in collect_man_pages()? {
+        let path = output_dir.join(format!("{name}.1"));
+        fs::write(&path, contents)
+            .with_context(|| format!("failed to write man page {}", path.display()))?;
+    }
+
+    Ok(())
+}
+
+fn collect_man_pages() -> Result<Vec<(String, Vec<u8>)>> {
+    let command = Cli::command();
+    let mut pages = Vec::new();
+    collect_man_pages_for_command("sah", &command, &mut pages)?;
+    Ok(pages)
+}
+
+fn collect_man_pages_for_command(
+    page_name: &str,
+    command: &clap::Command,
+    pages: &mut Vec<(String, Vec<u8>)>,
+) -> Result<()> {
+    let mut buffer = Vec::new();
+    clap_mangen::Man::new(command.clone()).render(&mut buffer)?;
+    pages.push((page_name.to_owned(), buffer));
+
+    for subcommand in command.get_subcommands() {
+        let child_page = format!("{page_name}-{}", subcommand.get_name());
+        collect_man_pages_for_command(&child_page, subcommand, pages)?;
+    }
+
+    Ok(())
 }
 
 fn run_chat(
@@ -1697,6 +1755,15 @@ mod tests {
     fn normalize_prompt_text_rejects_blank_values() {
         let error = normalize_prompt_text("\n\n".to_owned(), "stdin prompt").expect_err("blank");
         assert!(error.to_string().contains("stdin prompt is empty"));
+    }
+
+    #[test]
+    fn collects_man_pages_for_root_and_subcommands() {
+        let pages = collect_man_pages().expect("man pages");
+        let names: Vec<String> = pages.into_iter().map(|(name, _)| name).collect();
+        assert!(names.iter().any(|name| name == "sah"));
+        assert!(names.iter().any(|name| name == "sah-run"));
+        assert!(names.iter().any(|name| name == "sah-config"));
     }
 
     fn run_record(id: &str, started_at_ms: u128, status: RunStatus) -> sah_domain::RunRecord {
