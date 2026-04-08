@@ -130,6 +130,13 @@ cargo check
 cargo test -p sah-runtime
 ```
 
+CI now runs on GitHub Actions through [`.github/workflows/ci.yml`](/Users/ddm/Documents/GitHub/SensusaiHarness/.github/workflows/ci.yml) and covers:
+
+- `cargo fmt --check`
+- `cargo clippy --all-targets --all-features -- -D warnings`
+- `cargo test`
+- basic CLI smoke commands for `doctor`, `providers list`, and `list`
+
 ## Repository Notes
 
 - License: MIT, with the full text in `LICENSE`

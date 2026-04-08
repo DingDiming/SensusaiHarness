@@ -49,9 +49,10 @@ pub struct RunRequest {
     pub prompt: String,
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ApprovalMode {
+    #[default]
     Auto,
     Confirm,
 }
@@ -62,12 +63,6 @@ impl ApprovalMode {
             Self::Auto => "auto",
             Self::Confirm => "confirm",
         }
-    }
-}
-
-impl Default for ApprovalMode {
-    fn default() -> Self {
-        Self::Auto
     }
 }
 
