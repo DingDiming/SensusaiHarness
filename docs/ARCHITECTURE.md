@@ -59,9 +59,17 @@ The CLI adds one guardrail on top:
 
 - `confirm` mode requires explicit opt-in through `--allow-interactive-provider`
 
-The initial store root is:
+Phase 1.5 adds persistent CLI defaults:
 
-- `SAH_HOME` when set
+- config file defaults live at `~/.config/sah/config.json` unless `SAH_CONFIG` overrides the path
+- supported persisted defaults are provider, approval mode, and store root
+- runtime precedence is `CLI flags > environment variables > config file > built-in defaults`
+
+The effective store root is:
+
+- `--sah-home` when set
+- otherwise `SAH_HOME` when set
+- otherwise the config file `sah_home` value
 - otherwise `~/.sah`
 
 ## Legacy Policy
