@@ -27,6 +27,12 @@ The following are out of scope for Phase 1:
 - `provider-claude`: Claude CLI adapter
 - `sah-runtime`: execution loop that streams provider output into stored events
 
+The Rust mainline now also owns the reusable non-Web workspace/artifact helpers that were worth carrying forward from the legacy backend:
+
+- standard run workspace directory creation
+- traversal-safe workspace-relative artifact paths
+- typed artifact writers for product specs, sprint contracts, QA reports, handoffs, approvals, checkpoint metadata, and run summaries
+
 ## Persistence Model
 
 Each run is stored under a local run directory:

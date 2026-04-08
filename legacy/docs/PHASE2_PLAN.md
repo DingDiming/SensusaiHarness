@@ -1,3 +1,9 @@
+# Archived Planning Doc
+
+This document is quarantined legacy planning material from the previous Web-first rewrite path.
+It does not describe the active roadmap for the current terminal-first product.
+Prefer `/task.md` and the root `/docs` directory.
+
 # SensusAI Harness — 二阶段开发计划
 
 > 一阶段交付了完整的编排骨架（状态机、DB、事件流、审批闸门、artifact 协议、SSE 流式）。

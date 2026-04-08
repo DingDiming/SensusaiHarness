@@ -1,3 +1,9 @@
+# Archived Web-First Doc
+
+This document is quarantined legacy material from the previous Web-first system.
+It is not the source of truth for the current terminal-first Rust product.
+Prefer `/docs/ARCHITECTURE.md`, `/docs/OPERATIONS.md`, and `/docs/COMPATIBILITY.md` in the repository root.
+
 # SensusAI Harness API 规格
 
 > 目标：把 [ARCHITECTURE.md](/Users/ddm/Documents/GitHub/SensusaiHarness/docs/ARCHITECTURE.md) 中的接口层设计细化成可直接实现的 HTTP / SSE 契约。

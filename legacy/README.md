@@ -9,3 +9,5 @@ They are kept only as reference assets for:
 - prompt and orchestration patterns worth porting
 
 They are not part of the current product runtime and should not receive new feature work unless the migration plan explicitly calls for it.
+
+Conflicting Web-first docs under `legacy/docs/` are explicitly quarantined. Prefer the root-level `/docs` directory for current architecture, operations, and compatibility guidance.

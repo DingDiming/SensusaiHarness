@@ -62,6 +62,15 @@ This audit classifies the current `legacy/` contents into three buckets:
 2. The old Web surfaces (`legacy/frontend`, `legacy/web-core`, `legacy/docs/API.md`, `legacy/docs/ARCHITECTURE.md`) should not influence new product design.
 3. The generated content inside `legacy/` is large enough to distort repository hygiene and should be removed or quarantined first.
 
+## Port Progress
+
+Already ported into the Rust mainline:
+
+- reusable workspace directory creation from `legacy/backend/src/harness/workspace.py`
+- traversal-safe artifact path resolution from `legacy/backend/src/harness/workspace.py`
+- reusable artifact writers from `legacy/backend/src/harness/artifacts.py`
+- legacy artifact/workspace behavior assertions from `legacy/backend/tests/test_artifacts.py`
+
 ## Recommended Order
 
 1. Remove generated `drop` content from `legacy/`.

@@ -1,3 +1,9 @@
+# Archived Planning Doc
+
+This document is quarantined historical planning material from the earlier rewrite effort.
+It is no longer the active roadmap for the repository.
+Prefer `/task.md` and the root `/docs` directory.
+
 # SensusAI Harness — 重写计划
 
 > 基于 v1 经验教训的全面重建。目标：从 "可演示 MVP" 升级为 "真正可用的产品"。

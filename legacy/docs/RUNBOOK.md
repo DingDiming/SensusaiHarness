@@ -1,3 +1,9 @@
+# Archived Web-First Doc
+
+This document is quarantined legacy operational material for the previous Web-first stack.
+It should not be used as the runbook for the current terminal-first Rust product.
+Prefer `/docs/OPERATIONS.md` in the repository root.
+
 # SensusAI Harness Runbook
 
 > 目标：给开发和运维一个最小可执行手册，覆盖 long-running harness 最常见的排障与恢复场景。

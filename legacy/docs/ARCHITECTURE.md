@@ -1,3 +1,9 @@
+# Archived Web-First Doc
+
+This document is quarantined legacy material from the previous Web-first system.
+It conflicts with the current terminal-first Rust architecture and should not guide new implementation work.
+Prefer `/docs/ARCHITECTURE.md` in the repository root.
+
 # SensusAI Harness — 架构设计文档
 
 > 私有化 Web 版 long-running Agent Harness，Rust 底座 + Python Harness Runtime + Codex / Responses API 执行层。

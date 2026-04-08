@@ -4,15 +4,39 @@ use sah_domain::{
     RunEvent, RunEventKind, RunRecord, RunRequest, RunStatus, STORE_LAYOUT_VERSION, SessionRecord,
     TRANSCRIPT_SCHEMA_VERSION, WorkspaceSnapshot, now_timestamp_ms,
 };
+use serde::Serialize;
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::env;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+const RUN_WORKSPACE_SUBDIRS: &[&str] = &[
+    "repo",
+    "workspace",
+    "artifacts",
+    "artifacts/sprint_contracts",
+    "artifacts/qa_reports",
+    "artifacts/handoffs",
+    "artifacts/approvals",
+    "artifacts/summaries",
+    "checkpoints",
+    "outputs",
+    "uploads",
+    "logs",
+];
+
 pub struct Store {
     root: PathBuf,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct ArtifactWriteResult {
+    pub relative_path: String,
+    pub size_bytes: usize,
+    pub sha256: String,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -510,6 +534,94 @@ impl Store {
     }
 }
 
+pub fn ensure_run_workspace(root: &Path) -> Result<PathBuf> {
+    fs::create_dir_all(root)
+        .with_context(|| format!("failed to create workspace root {}", root.display()))?;
+
+    for subdir in RUN_WORKSPACE_SUBDIRS {
+        fs::create_dir_all(root.join(subdir))
+            .with_context(|| format!("failed to create workspace subdir {}", root.join(subdir).display()))?;
+    }
+
+    root.canonicalize()
+        .with_context(|| format!("failed to resolve workspace root {}", root.display()))
+}
+
+pub fn resolve_workspace_path(root: &Path, relative_path: &str) -> Result<PathBuf> {
+    let root = root
+        .canonicalize()
+        .with_context(|| format!("failed to resolve workspace root {}", root.display()))?;
+    let target = root.join(relative_path);
+
+    let normalized = target
+        .components()
+        .fold(PathBuf::new(), |mut path, component| {
+            path.push(component.as_os_str());
+            path
+        });
+
+    if normalized
+        .components()
+        .any(|component| matches!(component, std::path::Component::ParentDir))
+    {
+        bail!("path traversal detected: {}", relative_path);
+    }
+
+    Ok(root.join(relative_path))
+}
+
+pub fn write_product_spec(root: &Path, content: &str) -> Result<ArtifactWriteResult> {
+    write_text_artifact(root, "artifacts/product_spec.md", content)
+}
+
+pub fn write_sprint_contract(
+    root: &Path,
+    sprint: usize,
+    contract: &Value,
+) -> Result<ArtifactWriteResult> {
+    write_json_artifact(
+        root,
+        &format!("artifacts/sprint_contracts/sprint-{sprint:02}.json"),
+        contract,
+    )
+}
+
+pub fn write_qa_report(root: &Path, sprint: usize, report: &Value) -> Result<ArtifactWriteResult> {
+    write_json_artifact(
+        root,
+        &format!("artifacts/qa_reports/sprint-{sprint:02}.json"),
+        report,
+    )
+}
+
+pub fn write_approval_snapshot(
+    root: &Path,
+    gate_id: &str,
+    payload: &Value,
+) -> Result<ArtifactWriteResult> {
+    write_json_artifact(root, &format!("artifacts/approvals/{gate_id}.json"), payload)
+}
+
+pub fn write_handoff(root: &Path, sprint: usize, content: &str) -> Result<ArtifactWriteResult> {
+    write_text_artifact(
+        root,
+        &format!("artifacts/handoffs/sprint-{sprint:02}.md"),
+        content,
+    )
+}
+
+pub fn write_checkpoint_metadata(
+    root: &Path,
+    sprint: usize,
+    payload: &Value,
+) -> Result<ArtifactWriteResult> {
+    write_json_artifact(root, &format!("checkpoints/sprint-{sprint:02}.json"), payload)
+}
+
+pub fn write_run_summary(root: &Path, content: &str) -> Result<ArtifactWriteResult> {
+    write_text_artifact(root, "artifacts/summaries/run_summary.md", content)
+}
+
 fn default_store_root() -> PathBuf {
     if let Some(home) = dirs::home_dir() {
         return home.join(".sah");
@@ -681,6 +793,34 @@ fn copy_dir_all(source: &Path, destination: &Path) -> Result<()> {
     Ok(())
 }
 
+fn write_text_artifact(root: &Path, relative_path: &str, content: &str) -> Result<ArtifactWriteResult> {
+    let target = resolve_workspace_path(root, relative_path)?;
+    if let Some(parent) = target.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create artifact parent {}", parent.display()))?;
+    }
+    fs::write(&target, content)
+        .with_context(|| format!("failed to write artifact {}", target.display()))?;
+
+    Ok(ArtifactWriteResult {
+        relative_path: relative_path.to_owned(),
+        size_bytes: content.len(),
+        sha256: sha256_file(&target)?,
+    })
+}
+
+fn write_json_artifact(root: &Path, relative_path: &str, value: &Value) -> Result<ArtifactWriteResult> {
+    let content = serde_json::to_string_pretty(value)?;
+    write_text_artifact(root, relative_path, &content)
+}
+
+fn sha256_file(path: &Path) -> Result<String> {
+    let bytes = fs::read(path).with_context(|| format!("failed to read {}", path.display()))?;
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
 fn list_relative_files(root: &Path) -> Result<Vec<String>> {
     let mut paths = Vec::new();
     collect_relative_files(root, root, &mut paths)?;
@@ -773,6 +913,92 @@ mod tests {
         )
         .expect("stdout");
         assert_eq!(stdout, "/tmp/demo\n");
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn resolve_workspace_path_blocks_traversal() {
+        let root = unique_test_dir("resolve-workspace-path-blocks-traversal");
+        ensure_run_workspace(&root).expect("workspace");
+
+        let error = resolve_workspace_path(&root, "../outside.txt").expect_err("traversal");
+        assert!(error.to_string().contains("path traversal detected"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn artifact_writers_create_expected_workspace_files() {
+        let root = unique_test_dir("artifact-writers-create-expected-workspace-files");
+        ensure_run_workspace(&root).expect("workspace");
+
+        let spec = write_product_spec(&root, "# Product Spec").expect("spec");
+        let contract = write_sprint_contract(
+            &root,
+            2,
+            &serde_json::json!({ "objective": "Ship dashboard" }),
+        )
+        .expect("contract");
+        let qa = write_qa_report(&root, 2, &serde_json::json!({ "result": "pass" })).expect("qa");
+        let approval = write_approval_snapshot(
+            &root,
+            "gate-1",
+            &serde_json::json!({ "decision": "approved" }),
+        )
+        .expect("approval");
+        let handoff = write_handoff(&root, 2, "# Handoff").expect("handoff");
+        let checkpoint = write_checkpoint_metadata(
+            &root,
+            2,
+            &serde_json::json!({ "name": "sprint-02" }),
+        )
+        .expect("checkpoint");
+        let summary = write_run_summary(&root, "# Summary").expect("summary");
+
+        assert_eq!(
+            fs::read_to_string(root.join(&spec.relative_path)).expect("read spec"),
+            "# Product Spec"
+        );
+        assert_eq!(
+            serde_json::from_str::<Value>(
+                &fs::read_to_string(root.join(&contract.relative_path)).expect("read contract")
+            )
+            .expect("parse contract")["objective"],
+            "Ship dashboard"
+        );
+        assert_eq!(
+            serde_json::from_str::<Value>(
+                &fs::read_to_string(root.join(&qa.relative_path)).expect("read qa")
+            )
+            .expect("parse qa")["result"],
+            "pass"
+        );
+        assert_eq!(
+            serde_json::from_str::<Value>(
+                &fs::read_to_string(root.join(&approval.relative_path)).expect("read approval")
+            )
+            .expect("parse approval")["decision"],
+            "approved"
+        );
+        assert_eq!(
+            fs::read_to_string(root.join(&handoff.relative_path)).expect("read handoff"),
+            "# Handoff"
+        );
+        assert_eq!(
+            serde_json::from_str::<Value>(
+                &fs::read_to_string(root.join(&checkpoint.relative_path)).expect("read checkpoint")
+            )
+            .expect("parse checkpoint")["name"],
+            "sprint-02"
+        );
+        assert_eq!(
+            fs::read_to_string(root.join(&summary.relative_path)).expect("read summary"),
+            "# Summary"
+        );
+        assert_eq!(spec.relative_path, "artifacts/product_spec.md");
+        assert_eq!(summary.relative_path, "artifacts/summaries/run_summary.md");
+        assert_eq!(spec.sha256.len(), 64);
 
         let _ = fs::remove_dir_all(root);
     }
