@@ -132,6 +132,7 @@ cargo test -p sah-runtime
 
 ## Repository Notes
 
+- License: MIT, with the full text in `LICENSE`
 - Use GitHub issues and pull requests as the default backlog and review system.
 - Generated artifacts, local databases, and dependency directories are intentionally ignored.
 - `legacy/` is not part of the new runtime path.
